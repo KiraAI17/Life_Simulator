@@ -1,5 +1,5 @@
 import numpy as np
-from PyQt6.QtWidgets import QMainWindow, QStatusBar, QToolBar
+from PyQt6.QtWidgets import QMainWindow, QStatusBar, QToolBar, QComboBox
 from PyQt6.QtGui import QAction
 from PyQt6.QtCore import QTimer
 
@@ -38,9 +38,20 @@ class MainWindow(QMainWindow):
         self.pause_action.triggered.connect(self.toggle_pause)
         toolbar.addAction(self.pause_action)
 
+        self.speed_multiplier = 1
+        for speed in [1, 2, 5, 10]:
+            btn = QAction(f"x{speed}", self)
+            btn.triggered.connect(lambda checked, s=speed: self.set_speed(s))
+            toolbar.addAction(btn)
+
         new_map_action = QAction("🎲 Новая карта", self)
         new_map_action.triggered.connect(self.new_map)
         toolbar.addAction(new_map_action)
+
+        self.preset_box = QComboBox(self)
+        self.preset_box.addItems(World.PRESETS)
+        self.preset_box.setCurrentText(self.world.preset)
+        toolbar.addWidget(self.preset_box)
 
         self.status = QStatusBar()
         self.setStatusBar(self.status)
@@ -63,7 +74,8 @@ class MainWindow(QMainWindow):
 
     def new_map(self):
         new_seed = int(np.random.randint(0, 2**31))
-        self.world = World(width=self.world.width, height=self.world.height, seed=new_seed)
+        preset = self.preset_box.currentText()
+        self.world = World(width=self.world.width, height=self.world.height, seed=new_seed, preset=preset)
         self.canvas.set_world(self.world)
         self.update_status()
 
@@ -75,7 +87,21 @@ class MainWindow(QMainWindow):
             self.update_status()
 
     def update_status(self):
+        time_label = "🌙 Ночь" if self.world.is_night else "☀️ День"
         self.status.showMessage(
-            f"Tick: {self.world.tick} | Mode: {self.canvas.mode} | "
-            f"Zoom: {self.canvas.zoom:.1f}x | Avg plants: {self.world.plants.mean():.3f}"
+            f"{time_label} | Сезон: {self.world.season_name} | Tick: {self.world.tick} | "
+            f"Mode: {self.canvas.mode} | Zoom: {self.canvas.zoom:.1f}x | "
+            f"Avg plants: {self.world.plants.mean():.3f}"
         )
+
+    def set_speed(self, speed: int):
+        self.speed_multiplier = speed
+        self.update_status()
+
+    def tick(self):
+        if not self.is_paused:
+            for _ in range(self.speed_multiplier):
+                self.world.step()
+            self.canvas.update_texture()
+            self.canvas.update()
+            self.update_status()

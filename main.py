@@ -7,7 +7,7 @@ from ui.main_window import MainWindow
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    world = World(width=320, height=220, seed=None)
+    world = World(width=500, height=350, seed=None)
     window = MainWindow(world)
     window.show()
     sys.exit(app.exec())

@@ -182,51 +182,18 @@ class MapCanvas(QWidget):
             vis_y1 = min(self.world.height, int((self.height() - self.offset.y()) / self.zoom) + 6)
 
             # При отдалении камеры чуть увеличиваем спрайты, чтобы звери не превращались в 1 невидимый пиксель
-            sprite_scale = float(np.clip(1.1 / max(self.zoom, 0.35), 1.0, 2.2))
+            sprite_scale = float(np.clip(1.25 / max(self.zoom, 0.35), 1.0, 2.5))
 
             for agent in self.world.agents:
                 painter.save()
                 painter.translate(agent.x, agent.y)
                 painter.scale(sprite_scale, sprite_scale)
+                painter.rotate(np.degrees(agent.heading) + 90.0)
 
-                fur = agent.genes["fur"]
-                facing_left = np.cos(agent.heading) < 0
-
-                # Тень под существом
-                painter.fillRect(-1, 1, 3, 1, QColor(0, 0, 0, 110))
-
-                if agent.diet == "carnivore":
-                    body_col = QColor(int(235 - 40 * fur), int(65 - 15 * fur), int(45 - 10 * fur))
-                    back_col = body_col.darker(135)
-                    head_col = QColor(255, 225, 60) if agent.state == "hunting" else QColor(255, 140, 110)
-                    if agent.state == "sleeping":
-                        body_col, back_col, head_col = body_col.darker(150), back_col.darker(150), head_col.darker(150)
-
-                    painter.fillRect(-1, 0, 3, 1, body_col)
-                    painter.fillRect(-1, -1, 3, 1, back_col)
-                    if facing_left:
-                        painter.fillRect(-2, -1, 1, 1, head_col)
-                        painter.fillRect(2, -2, 1, 1, back_col)
-                    else:
-                        painter.fillRect(2, -1, 1, 1, head_col)
-                        painter.fillRect(-2, -2, 1, 1, back_col)
-                else:
-                    body_col = QColor(int(235 + 20 * fur), int(225 + 25 * fur), int(185 + 60 * fur))
-                    shade_col = body_col.darker(125)
-                    head_col = QColor(80, 215, 255) if agent.state == "fleeing" else QColor(65, 50, 40)
-                    if agent.state == "sleeping":
-                        body_col, shade_col, head_col = body_col.darker(150), shade_col.darker(150), head_col.darker(
-                            150)
-
-                    painter.fillRect(-1, -1, 2, 1, body_col)
-                    painter.fillRect(-1, 0, 2, 1, shade_col)
-                    if facing_left:
-                        painter.fillRect(-2, -1, 1, 1, head_col)
-                        painter.fillRect(-1, -2, 1, 1, shade_col)
-                    else:
-                        painter.fillRect(1, -1, 1, 1, head_col)
-                        painter.fillRect(0, -2, 1, 1, shade_col)
-
+                h_s, w_s, _ = agent.sprite_rgba.shape
+                raw_bytes = agent.sprite_rgba.tobytes()
+                qimg = QImage(raw_bytes, w_s, h_s, w_s * 4, QImage.Format.Format_RGBA8888)
+                painter.drawImage(-w_s // 2, -h_s // 2, qimg)
                 painter.restore()
 
     def wheelEvent(self, event):
@@ -285,4 +252,9 @@ class MapCanvas(QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
-        self.fit_to_window()
+
+        if self.width() > 0 and self.height() > 0:
+            fit_zoom = min(self.width() / self.world.width, self.height() / self.world.height)
+            self.zoom = max(0.35, fit_zoom)
+            self.offset_x = (self.width() - self.world.width * self.zoom) / 2.0
+            self.offset_y = (self.height() - self.world.height * self.zoom) / 2.0

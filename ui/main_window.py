@@ -88,13 +88,15 @@ class MainWindow(QMainWindow):
 
     def update_status(self):
         time_label = "🌙 Ночь" if self.world.is_night else "☀️ День"
-        herbs = sum(1 for a in self.world.agents if a.diet == "herbivore")
+        herbs = sum(1 for a in self.world.agents if not a.is_predator)
+        preds = len(self.world.agents) - herbs
+        max_crab = max((a.crab_score for a in self.world.agents), default=0.0)
         carns = len(self.world.agents) - herbs
         self.status.showMessage(
             f"{time_label} | Сезон: {self.world.season_name} | Tick: {self.world.tick} | "
             f"Mode: {self.canvas.mode} | Zoom: {self.canvas.zoom:.1f}x | "
-            f"Avg plants: {self.world.plants.mean():.3f}"
-            f"Травоядные {herbs} | хищники {carns}"
+            f"Avg plants: {self.world.plants.mean():.3f} "
+            f"Травоядные {herbs} | хищники {carns} | Max Crab: {max_crab:.0%}"
         )
 
     def set_speed(self, speed: int):

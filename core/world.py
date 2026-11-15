@@ -1,5 +1,6 @@
 import numpy as np
 from core.agent import Agent
+from core.morphology import EvolutionConfig
 
 
 class World:
@@ -52,6 +53,8 @@ class World:
         self.agents: list[Agent] = []
         self.carcasses: list[dict] = []
 
+        self.evo_config = EvolutionConfig()
+
         self.generate_map()
 
     def _upscale_bilinear(self, arr: np.ndarray, out_h: int, out_w: int) -> np.ndarray:
@@ -67,6 +70,7 @@ class World:
 
         wy = (y - y0)[:, None]
         wx = (x - x0)[None, :]
+        wx = (x - x0)[None, :]
 
         top = arr[y0[:, None], x0[None, :]] * (1.0 - wx) + arr[y0[:, None], x1[None, :]] * wx
         bot = arr[y1[:, None], x0[None, :]] * (1.0 - wx) + arr[y1[:, None], x1[None, :]] * wx
@@ -77,7 +81,8 @@ class World:
         base = self.rng.random((grid_h, grid_w), dtype=np.float32)
         return self._upscale_bilinear(base, out_h, out_w)
 
-    def _fbm_noise(self, h: int, w: int, octaves: int = 6, base_grid: tuple[int, int] = (4, 6), ridged: bool = False) -> np.ndarray:
+    def _fbm_noise(self, h: int, w: int, octaves: int = 6, base_grid: tuple[int, int] = (4, 6),
+                   ridged: bool = False) -> np.ndarray:
         total = np.zeros((h, w), dtype=np.float32)
         amplitude = 1.0
         max_amp = 0.0
@@ -131,10 +136,10 @@ class World:
             low_terrain = raw * 0.60 + mask * 0.50
         elif self.preset == "archipelago":
             # Тот самый удачный архипелаг, но на чистом value-шуме
-            dist = np.sqrt(nx**2 + ny**2)
+            dist = np.sqrt(nx ** 2 + ny ** 2)
             fine = self._fbm_noise(sh, sw, octaves=6, base_grid=(8, 12), ridged=False)
             low_terrain = fine * 0.85 + mountain_ridges * 0.15 - 0.15 * dist
-        else: # island
+        else:  # island
             dist = np.sqrt((nx * 1.1) ** 2 + (ny * 1.1) ** 2)
             low_terrain = raw * 0.75 - 0.55 * (dist ** 1.4) + 0.35
 
@@ -147,10 +152,10 @@ class World:
         # Естественные гладкие озёра в низинах внутри континентов
         low_basin = self._fbm_noise(sh, sw, octaves=3, base_grid=(5, 8), ridged=False)
         basin_noise = self._upscale_bilinear(low_basin, h, w)
-        valley = (self.elevation > self.sea_level + 0.07) & (self.elevation < self.sea_level + (self.mountain_level - self.sea_level) * 0.45)
+        valley = (self.elevation > self.sea_level + 0.07) & (
+                self.elevation < self.sea_level + (self.mountain_level - self.sea_level) * 0.45)
         self.freshwater = valley & (basin_noise > 0.70)
 
-        # --- Дальше остаётся весь твой прежний код инициализации климата и спавна мобов ---
         s = self.SCALE
         self.sim_elev = self.elevation.reshape(self.sim_h, s, self.sim_w, s).mean(axis=(1, 3))
         self.sim_freshwater = self.freshwater.reshape(self.sim_h, s, self.sim_w, s).any(axis=(1, 3))
@@ -175,11 +180,16 @@ class World:
         self.snow = np.where(self.sim_elev >= self.mountain_level, 1.0, 0.0).astype(np.float32)
         self.ice = np.zeros((self.sim_h, self.sim_w), dtype=np.float32)
 
-        can_grow = is_land & (~self.sim_freshwater) & (self.sim_elev < self.mountain_level) & (self.moisture > 0.32)
-        start_grass = self.rng.uniform(0.20, 0.55, size=(self.sim_h, self.sim_w)).astype(np.float32)
-        self.plants = np.where(can_grow, start_grass, 0.0)
+        # Плодородная суша + прибрежные отмели (водоросли и детрит)
+        is_shallow_water = (self.sim_elev >= self.sea_level - 0.14) & (self.sim_elev < self.sea_level)
+        is_fertile_land = is_land & (~self.sim_freshwater) & (self.sim_elev < self.mountain_level) & (
+                self.moisture > 0.32)
+        can_grow_biome = is_fertile_land | is_shallow_water
 
-        self.spawn_initial_life(herbivores=180, carnivores=40)
+        start_grass = self.rng.uniform(0.20, 0.55, size=(self.sim_h, self.sim_w)).astype(np.float32)
+        self.plants = np.where(can_grow_biome, start_grass, 0.0)
+
+        self.spawn_initial_life(land_herbs=120, land_preds=30, aquatic_worms=90)
 
     # Быстрый доступ к климату/траве по координатам полного мира (x, y)
     def get_temp_at(self, ix: int, iy: int) -> float:
@@ -201,29 +211,51 @@ class World:
         self.plants[sy, sx] = avail - eaten
         return eaten
 
-    def spawn_initial_life(self, herbivores: int = 140, carnivores: int = 32):
+    def spawn_initial_life(
+            self,
+            land_herbs: int = 120,
+            land_preds: int = 20,
+            foxes: int = 24,
+            aquatic_worms: int = 90,
+    ):
         self.agents.clear()
         self.carcasses.clear()
 
-        walkable = (self.elevation >= self.sea_level) & (~self.freshwater) & (self.elevation < self.mountain_level)
-        coords = np.argwhere(walkable)
-        if len(coords) == 0:
-            return
+        # 1. Сухопутные очаги (травоядные, волки и лисы)
+        land_mask = (self.elevation >= self.sea_level) & (~self.freshwater) & (self.elevation < self.mountain_level)
+        land_coords = np.argwhere(land_mask)
+        if len(land_coords) > 0:
+            herds = 8
+            centers = land_coords[self.rng.choice(len(land_coords), size=min(herds, len(land_coords)), replace=False)]
+            for cy, cx in centers:
+                h_count = land_herbs // herds
+                c_count = land_preds // herds
+                f_count = foxes // herds
 
-        herds = 10
-        centers = coords[self.rng.choice(len(coords), size=min(herds, len(coords)), replace=False)]
+                spawns = (
+                        ["land_grazer"] * h_count
+                        + ["land_stalker"] * c_count
+                        + ["fox"] * f_count
+                )
+                for arch in spawns:
+                    genes = self.evo_config.spawn_genome(arch, self.rng)
+                    for _ in range(20):
+                        ax = float(cx + self.rng.uniform(-45, 45))
+                        ay = float(cy + self.rng.uniform(-45, 45))
+                        if Agent.is_tile_passable(self, int(ax), int(ay), genes):
+                            self.agents.append(Agent(ax, ay, genes=genes, config=self.evo_config, rng=self.rng))
+                            break
 
-        for cy, cx in centers:
-            h_count = herbivores // herds
-            c_count = carnivores // herds
-            for i in range(h_count + c_count):
-                diet = "herbivore" if i < h_count else "carnivore"
-                for _ in range(20):
-                    ax = float(cx + self.rng.uniform(-45, 45))
-                    ay = float(cy + self.rng.uniform(-45, 45))
-                    if Agent.is_tile_land(self, int(ax), int(ay)):
-                        self.agents.append(Agent(ax, ay, diet=diet, rng=self.rng))
-                        break
+        # 2. Морской шельф и лагуны (водные черви / рыбы)
+        shallow_mask = (self.elevation >= self.sea_level - 0.12) & (self.elevation < self.sea_level - 0.005)
+        shallow_coords = np.argwhere(shallow_mask)
+        if len(shallow_coords) > 0:
+            chosen = shallow_coords[
+                self.rng.choice(len(shallow_coords), size=min(aquatic_worms, len(shallow_coords)), replace=False)]
+            for cy, cx in chosen:
+                genes = self.evo_config.spawn_genome("aquatic_worm", self.rng)
+                if Agent.is_tile_passable(self, int(cx), int(cy), genes):
+                    self.agents.append(Agent(float(cx), float(cy), genes=genes, config=self.evo_config, rng=self.rng))
 
     def _update_agents(self):
         if not self.agents:
@@ -235,10 +267,10 @@ class World:
             key = (int(a.x) // cell_size, int(a.y) // cell_size)
             grid.setdefault(key, []).append(a)
 
-        herb_count = sum(1 for a in self.agents if a.diet == "herbivore")
+        herb_count = sum(1 for a in self.agents if not a.is_predator)
         carn_count = len(self.agents) - herb_count
-        herb_pressure = float(np.clip((herb_count - 220) / 300.0, 0.0, 1.0))
-        carn_pressure = float(np.clip((carn_count - 55) / 80.0, 0.0, 1.0))
+        herb_pressure = float(np.clip((herb_count - 240) / 320.0, 0.0, 1.0))
+        carn_pressure = float(np.clip((carn_count - 60) / 90.0, 0.0, 1.0))
 
         newborns = []
         for a in self.agents:
@@ -250,7 +282,7 @@ class World:
                     if cell_list:
                         neighbors.extend(cell_list)
 
-            pressure = herb_pressure if a.diet == "herbivore" else carn_pressure
+            pressure = carn_pressure if a.is_predator else herb_pressure
             child = a.update(self, neighbors, self.carcasses, pressure)
             if child is not None:
                 newborns.append(child)
@@ -319,7 +351,9 @@ class World:
         growth = (self.growth_speed * wet_enough * comfort * daylight_growth * (1.0 - self.snow) - 0.00025 * (
                 1.0 - self.moisture)) * dt
 
-        self.plants = np.where(is_land, np.clip(self.plants + growth, 0.0, 1.0), 0.0)
+        is_shallow_water = (self.sim_elev >= self.sea_level - 0.035) & (self.sim_elev < self.sea_level)
+        vegetated_zone = is_land | is_shallow_water
+        self.plants = np.where(vegetated_zone, np.clip(self.plants + growth, 0.0, 1.0), 0.0)
 
         if self.tick % 10 == 0:
             dy = self.rng.integers(-2, 3)

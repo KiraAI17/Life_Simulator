@@ -1,0 +1,57 @@
+{
+  "genes": {
+    "body_width": {"min": 0.20, "max": 1.00, "sigma": 0.08, "prob": 0.35},
+    "body_length": {"min": 0.25, "max": 1.00, "sigma": 0.08, "prob": 0.35},
+    "shell": {"min": 0.00, "max": 1.00, "sigma": 0.07, "prob": 0.35},
+    "claws": {"min": 0.00, "max": 1.00, "sigma": 0.07, "prob": 0.35},
+    "legs": {"min": 0.00, "max": 8.00, "sigma": 2.00, "prob": 0.15},
+    "lateral_gait": {"min": 0.00, "max": 1.00, "sigma": 0.08, "prob": 0.35},
+    "gills": {"min": 0.00, "max": 1.00, "sigma": 0.07, "prob": 0.35},
+    "lungs": {"min": 0.00, "max": 1.00, "sigma": 0.07, "prob": 0.35},
+    "diet_bias": {"min": -1.00, "max": 1.00, "sigma": 0.12, "prob": 0.35},
+    "speed": {"min": 0.12, "max": 0.65, "sigma": 0.04, "prob": 0.35},
+    "sense": {"min": 12.0, "max": 68.0, "sigma": 4.50, "prob": 0.35},
+    "size": {"min": 0.60, "max": 2.00, "sigma": 0.08, "prob": 0.30},
+    "fur": {"min": 0.00, "max": 1.00, "sigma": 0.07, "prob": 0.35},
+    "optimal_temp": {"min": -10.0, "max": 35.0, "sigma": 2.20, "prob": 0.30},
+    "nocturnal": {"min": 0.00, "max": 1.00, "sigma": 1.00, "prob": 0.015}
+  },
+  "energy_costs": {
+    "base_metabolism": 0.012,
+    "size_exponent": 1.35,
+    "speed_cost": 0.022,
+    "speed_exponent": 1.4,
+    "shell_weight_speed_penalty": 0.38,
+    "shell_maintenance": 0.006,
+    "claw_maintenance": 0.005,
+    "fur_maintenance": 0.004,
+    "temp_stress_factor": 0.0014,
+    "suffocation_damage": 0.35
+  },
+  "archetypes": {
+    "aquatic_worm": {
+      "body_width": 0.28, "body_length": 0.85, "shell": 0.05, "claws": 0.05,
+      "legs": 0.0, "lateral_gait": 0.05, "gills": 0.90, "lungs": 0.10,
+      "diet_bias": -0.35, "speed": 0.28, "sense": 32.0, "size": 0.95,
+      "fur": 0.0, "optimal_temp": 12.0, "nocturnal": 0.0
+    },
+    "land_grazer": {
+      "body_width": 0.42, "body_length": 0.72, "shell": 0.10, "claws": 0.05,
+      "legs": 4.0, "lateral_gait": 0.05, "gills": 0.05, "lungs": 0.90,
+      "diet_bias": -0.85, "speed": 0.26, "sense": 30.0, "size": 1.05,
+      "fur": 0.35, "optimal_temp": 18.0, "nocturnal": 0.0
+    },
+    "land_stalker": {
+      "body_width": 0.38, "body_length": 0.80, "shell": 0.12, "claws": 0.15,
+      "legs": 4.0, "lateral_gait": 0.10, "gills": 0.05, "lungs": 0.90,
+      "diet_bias": 0.80, "speed": 0.36, "sense": 60.0, "size": 1.20,
+      "fur": 0.30, "optimal_temp": 18.0, "nocturnal": 0.0
+    },
+    "fox": {
+      "body_width": 0.36, "body_length": 0.78, "shell": 0.08, "claws": 0.15,
+      "legs": 4.0, "lateral_gait": 0.22, "gills": 0.02, "lungs": 0.95,
+      "diet_bias": 0.65, "speed": 0.40, "sense": 64.0, "size": 0.95,
+      "fur": 0.75, "optimal_temp": 14.0, "nocturnal": 0.35
+    }
+  }
+}

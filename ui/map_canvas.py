@@ -1,6 +1,6 @@
 import numpy as np
 from PyQt6.QtWidgets import QWidget
-from PyQt6.QtGui import QPainter, QImage, QPixmap, QColor
+from PyQt6.QtGui import QPainter, QImage, QPixmap, QColor, QPolygonF
 from PyQt6.QtCore import Qt, QPointF
 
 from core.world import World
@@ -12,110 +12,133 @@ class MapCanvas(QWidget):
         self.world = world
         self.mode = 'composite'
 
-        self.zoom = 4.0
-        self.offset = QPointF(10.0, 10.0)
+        self.zoom = 1.0
+        self.offset = QPointF(0.0, 0.0)
         self.last_mouse_pos = None
 
         self.pixmap = QPixmap()
+        self._build_static_terrain()
         self.update_texture()
 
     def set_world(self, world: World):
         self.world = world
+        self._build_static_terrain()
         self.update_texture()
+        self.fit_to_window()
         self.update()
 
-    def set_mode(self, mode: str):
-        self.mode = mode
-        self.update_texture()
-        self.update()
+    def _build_static_terrain(self):
+        h, w = self.world.height, self.world.width
+        elev = self.world.elevation
+        moist = self.world._upscale_bilinear(self.world.moisture, h, w)
+
+        rgb = np.zeros((h, w, 3), dtype=np.uint8)
+        deep_ocean = np.array([12, 30, 75])
+        shallow_ocean = np.array([38, 100, 160])
+        shelf_ocean = np.array([65, 140, 190])
+        beach = np.array([220, 200, 145])
+        desert = np.array([210, 185, 120])
+        savanna = np.array([145, 160, 75])
+        grass_base = np.array([75, 138, 55])
+        rock = np.array([115, 110, 105])
+        freshwater_c = np.array([38, 115, 180])
+
+        is_ocean = elev < self.world.sea_level
+        ocean_depth = np.clip(elev / max(0.01, self.world.sea_level), 0, 1)
+        is_shelf = is_ocean & (ocean_depth > 0.85)
+
+        is_beach = (~is_ocean) & (elev < self.world.sea_level + 0.020)
+        is_mountain = elev >= self.world.mountain_level
+        is_lowland = (~is_ocean) & (~is_beach) & (elev < self.world.mountain_level - 0.12)
+        is_land = (~is_ocean) & (~is_beach) & (~is_mountain)
+
+        is_desert = is_lowland & (moist < 0.28)
+        is_savanna = is_lowland & (moist >= 0.28) & (moist < 0.42)
+
+        for c in range(3):
+            ocean_col = (shallow_ocean[c] * ocean_depth + deep_ocean[c] * (1 - ocean_depth)).astype(np.uint8)
+            ocean_col = np.where(is_shelf, shelf_ocean[c], ocean_col)
+            rgb[..., c] = np.where(is_ocean, ocean_col, rgb[..., c])
+
+            land_col = np.where(is_desert, desert[c], np.where(is_savanna, savanna[c], grass_base[c]))
+            rgb[..., c] = np.where(is_land, land_col, rgb[..., c])
+            rgb[..., c] = np.where(is_beach, beach[c], rgb[..., c])
+            rgb[..., c] = np.where(is_mountain, rock[c], rgb[..., c])
+            rgb[..., c] = np.where(self.world.freshwater, freshwater_c[c], rgb[..., c])
+
+        land_norm = np.clip((elev - self.world.sea_level) / max(0.01, self.world.mountain_level - self.world.sea_level), 0.0, 1.0)
+        dy, dx = np.gradient(elev)
+        slope_light = 1.0 - (dx * 0.75 + dy * 0.75) * 240.0
+        elev_tint = 1.08 - 0.22 * land_norm
+
+        self._shade = np.clip(slope_light * elev_tint, 0.45, 1.35)
+        self._apply_shade = (~is_ocean) & (~self.world.freshwater)
+        self._static_base_rgb = rgb
+        self._is_veg_zone = is_land & (~self.world.freshwater) & (~is_desert) & (~self.world.freshwater) & (~is_savanna)
 
     def _build_rgb(self) -> np.ndarray:
-        h, w = self.world.height, self.world.width
-        rgb = np.zeros((h, w, 3), dtype=np.uint8)
-        elev = self.world.elevation
-        moist = self.world.moisture
+        s = self.world.SCALE
 
         if self.mode == 'composite':
-            deep_ocean = np.array([12, 30, 75])
-            shallow_ocean = np.array([38, 100, 160])
-            shelf_ocean = np.array([65, 140, 190])
-            beach = np.array([220, 200, 145])
-            desert = np.array([210, 185, 120])
-            savanna = np.array([145, 160, 75])
-            grass_base = np.array([75, 138, 55])
+            rgb = self._static_base_rgb.copy()
             forest = np.array([28, 85, 32])
-            rock = np.array([115, 110, 105])
             snow = np.array([235, 242, 250])
-            freshwater_c = np.array([38, 115, 180])
             ice_color = np.array([180, 222, 245])
 
-            is_ocean = elev < self.world.sea_level
-            ocean_depth = np.clip(elev / max(0.01, self.world.sea_level), 0, 1)
-            is_shelf = is_ocean & (ocean_depth > 0.85)
-
-            is_beach = (~is_ocean) & (elev < self.world.sea_level + 0.022)
-            is_mountain = elev >= self.world.mountain_level
-            is_lowland = (~is_ocean) & (~is_beach) & (elev < self.world.mountain_level - 0.12)
-            is_land = (~is_ocean) & (~is_beach) & (~is_mountain)
-
-            # 1. Океан и шельф
-            for c in range(3):
-                ocean_col = (shallow_ocean[c] * ocean_depth + deep_ocean[c] * (1 - ocean_depth)).astype(np.uint8)
-                ocean_col = np.where(is_shelf, shelf_ocean[c], ocean_col)
-                rgb[..., c] = np.where(is_ocean, ocean_col, rgb[..., c])
-
-            # 2. Биомы суши (пустыни только на низменностях, без жёлтой сыпи в горах!)
-            plant_factor = np.clip(self.world.plants, 0, 1)
-            is_desert = is_lowland & (moist < 0.28)
-            is_savanna = is_lowland & (moist >= 0.28) & (moist < 0.42)
+            # Растягиваем быстрые слои (250x400) -> (1000x1600)
+            h, w = self.world.height, self.world.width
+            p = self.world._upscale_bilinear(self.world.plants, h, w)
+            sn = self.world._upscale_bilinear(self.world.snow, h, w)
+            ic = self.world._upscale_bilinear(self.world.ice, h, w)
 
             for c in range(3):
-                veg_col = (grass_base[c] * (1 - plant_factor) + forest[c] * plant_factor).astype(np.uint8)
-                land_col = np.where(is_desert, desert[c], np.where(is_savanna, savanna[c], veg_col))
+                rgb[..., c] = np.where(
+                    self._is_veg_zone,
+                    (rgb[..., c] * (1.0 - p * 0.65) + forest[c] * (p * 0.65)).astype(np.uint8),
+                    rgb[..., c]
+                )
+                rgb[..., c] = (rgb[..., c] * (1.0 - sn) + snow[c] * sn).astype(np.uint8)
+                rgb[..., c] = (rgb[..., c] * (1.0 - ic) + ice_color[c] * ic).astype(np.uint8)
 
-                rgb[..., c] = np.where(is_land, land_col, rgb[..., c])
-                rgb[..., c] = np.where(is_beach, beach[c], rgb[..., c])
-                rgb[..., c] = np.where(is_mountain, rock[c], rgb[..., c])
-                rgb[..., c] = np.where(self.world.freshwater, freshwater_c[c], rgb[..., c])
+            # Накладываем 3D-тени ПОСЛЕ снега — горы обретают объём и хребты!
+            rgb = np.where(self._apply_shade[..., None], np.clip(rgb * self._shade[..., None], 0, 255).astype(np.uint8),
+                           rgb)
 
-                # Снег и лёд накладываем ДО теней, чтобы на горах были объёмные хребты!
-                s = self.world.snow
-                rgb[..., c] = (rgb[..., c] * (1.0 - s) + snow[c] * s).astype(np.uint8)
-                ice = self.world.ice
-                rgb[..., c] = (rgb[..., c] * (1.0 - ice) + ice_color[c] * ice).astype(np.uint8)
-
-            # 3. 3D-рельеф (тени от солнца поверх всего, включая снежные вершины)
-            dy, dx = np.gradient(elev)
-            slope_light = 1.0 - (dx * 0.75 + dy * 0.75) * 42.0
-            shade = np.clip(slope_light, 0.58, 1.25)
-
-            apply_shade = (~is_ocean) & (~self.world.freshwater)
-            rgb = np.where(apply_shade[..., None], np.clip(rgb * shade[..., None], 0, 255).astype(np.uint8), rgb)
 
         elif self.mode == 'elevation':
-            rgb[..., 0] = (60 + 195 * elev).astype(np.uint8)
-            rgb[..., 1] = (40 + 210 * elev).astype(np.uint8)
-            rgb[..., 2] = (25 + 225 * elev).astype(np.uint8)
+            h, w = self.world.height, self.world.width
+            rgb = np.zeros((h, w, 3), dtype=np.uint8)
+            e = self.world.elevation
+            rgb[..., 0] = (60 + 195 * e).astype(np.uint8)
+            rgb[..., 1] = (40 + 210 * e).astype(np.uint8)
+            rgb[..., 2] = (25 + 225 * e).astype(np.uint8)
 
         elif self.mode == 'moisture':
-            rgb[..., 0] = (220 * (1 - moist)).astype(np.uint8)
-            rgb[..., 1] = (180 * moist + 80 * (1 - moist)).astype(np.uint8)
-            rgb[..., 2] = (220 * moist).astype(np.uint8)
+            h, w = self.world.height, self.world.width
+            rgb = np.zeros((h, w, 3), dtype=np.uint8)
+            m = np.repeat(np.repeat(self.world.moisture, s, axis=0), s, axis=1)
+            rgb[..., 0] = (220 * (1 - m)).astype(np.uint8)
+            rgb[..., 1] = (180 * m + 80 * (1 - m)).astype(np.uint8)
+            rgb[..., 2] = (220 * m).astype(np.uint8)
 
         elif self.mode == 'temperature':
-            # Честная температурная шкала: -20°C (синий) -> +12°C (бирюзово-зелёный) -> +42°C (красный)
-            t = np.clip((self.world.temperature + 20.0) / 62.0, 0.0, 1.0)
+            h, w = self.world.height, self.world.width
+            rgb = np.zeros((h, w, 3), dtype=np.uint8)
+            temp = np.repeat(np.repeat(self.world.temperature, s, axis=0), s, axis=1)
+            t = np.clip((temp + 20.0) / 62.0, 0.0, 1.0)
             rgb[..., 0] = np.clip(255 * (t * 1.6 - 0.5), 0, 255).astype(np.uint8)
             rgb[..., 1] = (220 * (1.0 - np.abs(t - 0.52) * 1.9).clip(0, 1)).astype(np.uint8)
             rgb[..., 2] = np.clip(255 * (1.0 - t * 1.5), 0, 255).astype(np.uint8)
 
-        elif self.mode == 'plants':
-            p = self.world.plants
+        else:  # plants
+            h, w = self.world.height, self.world.width
+            rgb = np.zeros((h, w, 3), dtype=np.uint8)
+            p = np.repeat(np.repeat(self.world.plants, s, axis=0), s, axis=1)
             rgb[..., 0] = (120 * (1 - p)).astype(np.uint8)
             rgb[..., 1] = (80 + 170 * p).astype(np.uint8)
             rgb[..., 2] = (40 * (1 - p)).astype(np.uint8)
 
-        # Смена дня и ночи (приглушаем яркость и добавляем лёгкий лунный оттенок ночью)
+        # Ночное освещение
         light = self.world.light_level
         if light < 0.99:
             rgb[..., 0] = (rgb[..., 0] * light * 0.92).astype(np.uint8)
@@ -123,6 +146,11 @@ class MapCanvas(QWidget):
             rgb[..., 2] = np.clip(rgb[..., 2] * (0.45 + 0.55 * light), 0, 255).astype(np.uint8)
 
         return rgb
+
+    def set_mode(self, mode: str):
+        self.mode = mode
+        self.update_texture()
+        self.update()
 
     def update_texture(self):
         rgb = np.ascontiguousarray(self._build_rgb())
@@ -139,16 +167,78 @@ class MapCanvas(QWidget):
         painter.scale(self.zoom, self.zoom)
         painter.drawPixmap(0, 0, self.pixmap)
 
+        # 1. Пиксель-арт падаль на земле
+        painter.setPen(Qt.PenStyle.NoPen)
+        for c in self.world.carcasses:
+            cx, cy = int(c["x"]), int(c["y"])
+            painter.fillRect(cx, cy, 2, 1, QColor(145, 35, 35))
+            painter.fillRect(cx, cy + 1, 1, 1, QColor(210, 195, 175))  # пиксельная косточка
+
+            # 2. Пиксель-арт животные (без овалов и сглаживания — чистые пиксели в сетке мира!)
+            # Видимая область карты в координатах мира (не тратим время на рисование зверей за экраном!)
+            vis_x0 = max(0, int(-self.offset.x() / self.zoom) - 6)
+            vis_y0 = max(0, int(-self.offset.y() / self.zoom) - 6)
+            vis_x1 = min(self.world.width, int((self.width() - self.offset.x()) / self.zoom) + 6)
+            vis_y1 = min(self.world.height, int((self.height() - self.offset.y()) / self.zoom) + 6)
+
+            # При отдалении камеры чуть увеличиваем спрайты, чтобы звери не превращались в 1 невидимый пиксель
+            sprite_scale = float(np.clip(1.1 / max(self.zoom, 0.35), 1.0, 2.2))
+
+            for agent in self.world.agents:
+                painter.save()
+                painter.translate(agent.x, agent.y)
+                painter.scale(sprite_scale, sprite_scale)
+
+                fur = agent.genes["fur"]
+                facing_left = np.cos(agent.heading) < 0
+
+                # Тень под существом
+                painter.fillRect(-1, 1, 3, 1, QColor(0, 0, 0, 110))
+
+                if agent.diet == "carnivore":
+                    body_col = QColor(int(235 - 40 * fur), int(65 - 15 * fur), int(45 - 10 * fur))
+                    back_col = body_col.darker(135)
+                    head_col = QColor(255, 225, 60) if agent.state == "hunting" else QColor(255, 140, 110)
+                    if agent.state == "sleeping":
+                        body_col, back_col, head_col = body_col.darker(150), back_col.darker(150), head_col.darker(150)
+
+                    painter.fillRect(-1, 0, 3, 1, body_col)
+                    painter.fillRect(-1, -1, 3, 1, back_col)
+                    if facing_left:
+                        painter.fillRect(-2, -1, 1, 1, head_col)
+                        painter.fillRect(2, -2, 1, 1, back_col)
+                    else:
+                        painter.fillRect(2, -1, 1, 1, head_col)
+                        painter.fillRect(-2, -2, 1, 1, back_col)
+                else:
+                    body_col = QColor(int(235 + 20 * fur), int(225 + 25 * fur), int(185 + 60 * fur))
+                    shade_col = body_col.darker(125)
+                    head_col = QColor(80, 215, 255) if agent.state == "fleeing" else QColor(65, 50, 40)
+                    if agent.state == "sleeping":
+                        body_col, shade_col, head_col = body_col.darker(150), shade_col.darker(150), head_col.darker(
+                            150)
+
+                    painter.fillRect(-1, -1, 2, 1, body_col)
+                    painter.fillRect(-1, 0, 2, 1, shade_col)
+                    if facing_left:
+                        painter.fillRect(-2, -1, 1, 1, head_col)
+                        painter.fillRect(-1, -2, 1, 1, shade_col)
+                    else:
+                        painter.fillRect(1, -1, 1, 1, head_col)
+                        painter.fillRect(0, -2, 1, 1, shade_col)
+
+                painter.restore()
+
     def wheelEvent(self, event):
         factor = 1.15 if event.angleDelta().y() > 0 else 1 / 1.15
-        new_zoom = np.clip(self.zoom * factor, 1.0, 20.0)
+        min_zoom = min(self.width() / self.world.width, self.height() / self.world.height)
+        new_zoom = float(np.clip(self.zoom * factor, min_zoom, 20.0))
 
         mouse_pos = event.position()
         self.offset = mouse_pos - (mouse_pos - self.offset) * (new_zoom / self.zoom)
-        self.zoom = float(new_zoom)
-        self.update()
-
+        self.zoom = new_zoom
         self._clamp_camera()
+        self.update()
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -187,3 +277,12 @@ class MapCanvas(QWidget):
             self.offset.setY((self.height() - map_h) / 2.0)
         else:
             self.offset.setY(float(np.clip(self.offset.y(), self.height() - map_h, 0.0)))
+
+    def fit_to_window(self):
+        if self.width() > 0 and self.height() > 0:
+            self.zoom = min(self.width() / self.world.width, self.height() / self.world.height)
+            self._clamp_camera()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.fit_to_window()

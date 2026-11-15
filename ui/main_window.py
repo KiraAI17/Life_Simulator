@@ -88,10 +88,13 @@ class MainWindow(QMainWindow):
 
     def update_status(self):
         time_label = "🌙 Ночь" if self.world.is_night else "☀️ День"
+        herbs = sum(1 for a in self.world.agents if a.diet == "herbivore")
+        carns = len(self.world.agents) - herbs
         self.status.showMessage(
             f"{time_label} | Сезон: {self.world.season_name} | Tick: {self.world.tick} | "
             f"Mode: {self.canvas.mode} | Zoom: {self.canvas.zoom:.1f}x | "
             f"Avg plants: {self.world.plants.mean():.3f}"
+            f"Травоядные {herbs} | хищники {carns}"
         )
 
     def set_speed(self, speed: int):
@@ -102,6 +105,8 @@ class MainWindow(QMainWindow):
         if not self.is_paused:
             for _ in range(self.speed_multiplier):
                 self.world.step()
-            self.canvas.update_texture()
+            # Пересобираем пиксмап ландшафта только при изменении климата/травы, а не на каждый шаг зверей!
+            if self.world.tick % 5 == 0 or self.speed_multiplier >= 5:
+                self.canvas.update_texture()
             self.canvas.update()
             self.update_status()

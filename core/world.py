@@ -186,11 +186,10 @@ class World:
         self.snow = np.where(self.sim_elev >= self.mountain_level, 1.0, 0.0).astype(np.float32)
         self.ice = np.zeros((self.sim_h, self.sim_w), dtype=np.float32)
 
-        # Плодородная суша + прибрежные отмели (водоросли и детрит)
-        is_shallow_water = (self.sim_elev >= self.sea_level - 0.14) & (self.sim_elev < self.sea_level)
+        is_ocean = self.sim_elev < self.sea_level
         is_fertile_land = is_land & (~self.sim_freshwater) & (self.sim_elev < self.mountain_level) & (
-                self.moisture > 0.32)
-        can_grow_biome = is_fertile_land | is_shallow_water
+                    self.moisture > 0.32)
+        can_grow_biome = is_fertile_land | is_ocean
 
         start_grass = self.rng.uniform(0.20, 0.55, size=(self.sim_h, self.sim_w)).astype(np.float32)
         self.plants = np.where(can_grow_biome, start_grass, 0.0)
@@ -218,30 +217,27 @@ class World:
         return eaten
 
     def spawn_initial_life(
-            self,
-            land_herbs: int = 120,
-            land_preds: int = 20,
-            foxes: int = 24,
-            aquatic_worms: int = 90,
+        self,
+        land_herbs: int = 120,
+        land_preds: int = 20,
+        foxes: int = 24,
+        aquatic_worms: int = 90,
+        aquatic_preds: int = 18,
     ):
         self.agents.clear()
         self.carcasses.clear()
 
-        # 1. Сухопутные очаги (травоядные, волки и лисы)
+        # 1. Сухопутные очаги (травоядные, волки, лисы)
         land_mask = (self.elevation >= self.sea_level) & (~self.freshwater) & (self.elevation < self.mountain_level)
         land_coords = np.argwhere(land_mask)
         if len(land_coords) > 0:
             herds = 8
             centers = land_coords[self.rng.choice(len(land_coords), size=min(herds, len(land_coords)), replace=False)]
             for cy, cx in centers:
-                h_count = land_herbs // herds
-                c_count = land_preds // herds
-                f_count = foxes // herds
-
                 spawns = (
-                        ["land_grazer"] * h_count
-                        + ["land_stalker"] * c_count
-                        + ["fox"] * f_count
+                    ["land_grazer"] * (land_herbs // herds)
+                    + ["land_stalker"] * (land_preds // herds)
+                    + ["fox"] * (foxes // herds)
                 )
                 for arch in spawns:
                     genes = self.evo_config.spawn_genome(arch, self.rng)
@@ -252,14 +248,15 @@ class World:
                             self.agents.append(Agent(ax, ay, genes=genes, config=self.evo_config, rng=self.rng))
                             break
 
-        # 2. Морской шельф и лагуны (водные черви / рыбы)
-        shallow_mask = (self.elevation >= self.sea_level - 0.12) & (self.elevation < self.sea_level - 0.005)
-        shallow_coords = np.argwhere(shallow_mask)
-        if len(shallow_coords) > 0:
-            chosen = shallow_coords[
-                self.rng.choice(len(shallow_coords), size=min(aquatic_worms, len(shallow_coords)), replace=False)]
-            for cy, cx in chosen:
-                genes = self.evo_config.spawn_genome("aquatic_worm", self.rng)
+        # 2. Океан (мирные рыбы + морские хищники/акулы)
+        ocean_mask = self.elevation < self.sea_level - 0.015
+        ocean_coords = np.argwhere(ocean_mask)
+        if len(ocean_coords) > 0:
+            total_sea = min(aquatic_worms + aquatic_preds, len(ocean_coords))
+            chosen = ocean_coords[self.rng.choice(len(ocean_coords), size=total_sea, replace=False)]
+            for idx, (cy, cx) in enumerate(chosen):
+                arch = "aquatic_worm" if idx < aquatic_worms else "aquatic_predator"
+                genes = self.evo_config.spawn_genome(arch, self.rng)
                 if Agent.is_tile_passable(self, int(cx), int(cy), genes):
                     self.agents.append(Agent(float(cx), float(cy), genes=genes, config=self.evo_config, rng=self.rng))
 
@@ -359,7 +356,7 @@ class World:
         growth *= self.plant_growth_mult
 
         is_shallow_water = (self.sim_elev >= self.sea_level - 0.035) & (self.sim_elev < self.sea_level)
-        vegetated_zone = is_land | is_shallow_water
+        vegetated_zone = is_land | is_ocean
         self.plants = np.where(vegetated_zone, np.clip(self.plants + growth, 0.0, 1.0), 0.0)
 
         if self.tick % 15 == 0:

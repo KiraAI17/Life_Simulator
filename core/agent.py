@@ -66,6 +66,9 @@ class Agent:
         self.state = "wandering" # wandering | foraging | hunting | fleeing | drinking | suffocating | sleeping
         self.alive = True
 
+        self.marked = False  # Метка пользователя (маячок на карте)
+        self.custom_name = ""  # Имя существа, если пользователь назвал его
+
         # Предвычисленные данные для аналитики и рендера (PyQt / PyGame)
         self.crab_score = calculate_crab_score(self.genes)
         self.sprite_rgba = build_sprite_rgba(self.genes)
@@ -110,23 +113,24 @@ class Agent:
         dy = ty - self.y
         dist = np.hypot(dx, dy)
         if dist > 1e-4:
-            self.vx += (dx / dist) * weight
-            self.vy += (dy / dist) * weight
+            # Плавное рулевое усилие вместо мгновенного рывка
+            force = 0.085 * weight
+            self.vx += (dx / dist) * force
+            self.vy += (dy / dist) * force
 
     def _steer_lateral(self, threat_x: float, threat_y: float, weight: float = 1.0):
-        """Уклонение боком (крабья походка) перпендикулярно угрозе."""
         dx = self.x - threat_x
         dy = self.y - threat_y
         dist = np.hypot(dx, dy)
         if dist > 1e-4:
             nx, ny = dx / dist, dy / dist
-            side = 1.0 if (self.age // 40) % 2 == 0 else -1.0
+            side = 1.0 if (self.age // 50) % 2 == 0 else -1.0
             lat = self.genes[G_LATERAL]
-            # Смесь отступления назад и рывка вбок
             steer_x = nx * (1.0 - 0.5 * lat) + (-ny * side) * lat
             steer_y = ny * (1.0 - 0.5 * lat) + (nx * side) * lat
-            self.vx += steer_x * weight
-            self.vy += steer_y * weight
+            force = 0.065 * weight
+            self.vx += steer_x * force
+            self.vy += steer_y * force
 
     def _seek_safe_medium(self, world: "World", ix: int, iy: int, want_water: bool):
         """Если существо задыхается, ищет ближайшую подходящую среду (берег или воду)."""
@@ -170,6 +174,35 @@ class Agent:
             meat_total = 45.0 * target.genes[G_SIZE] * (1.0 - 0.35 * target.genes[G_SHELL])
             self.energy = min(100.0, self.energy + meat_total * 0.55)
             carcasses.append({"x": target.x, "y": target.y, "meat": meat_total * 0.45})
+
+    def rebuild_phenotype(self):
+        """Пересчитывает физику и 9x9 спрайт после ручной кастомизации генов в инспекторе."""
+        self.radius = float(0.85 + 0.75 * self.genes[G_SIZE] + 0.45 * self.genes[G_WIDTH])
+        self.mass = float(self.genes[G_SIZE] * (1.0 + 0.6 * self.genes[G_SHELL]))
+        self.max_hp = float(45.0 * self.genes[G_SIZE] + 55.0 * self.genes[G_SHELL])
+        self.hp = min(self.hp, self.max_hp)
+        self.crab_score = calculate_crab_score(self.genes)
+        self.sprite_rgba = build_sprite_rgba(self.genes)
+
+    def apply_archetype(self, archetype: str):
+        """Мгновенно применяет геном выбранного архетипа к существу."""
+        self.genes = self.config.spawn_genome(archetype, self.rng)
+        self.rebuild_phenotype()
+        self.hp = self.max_hp
+        self.energy = 85.0
+        self.hydration = 90.0
+        self.oxygen = 100.0  # Правая панель в QScrollArea — вмещает всё без сжатия на любом экране
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFixedWidth(345)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        main_layout.addWidget(scroll)
+
+        side_panel = QWidget()
+        side_layout = QVBoxLayout(side_panel)
+        side_layout.setContentsMargins(6, 6, 6, 6)
+        side_layout.setSpacing(8)
+        scroll.setWidget(side_panel)
 
     def update(self, world: "World", neighbors: list["Agent"], carcasses: list[dict], population_pressure: float) -> "Agent | None":
         if not self.alive:
@@ -227,11 +260,12 @@ class Agent:
             d = np.hypot(dx, dy)
 
             # Физическое расталкивание при пересечении радиусов тел
-            min_dist = (self.radius + other.radius) * 1.45
-            if 1e-4 < d < min_dist:
+            is_hunting_target = self.is_predator and (not other.is_predator)
+            min_dist = (self.radius + other.radius) * 1.15
+            if (not is_hunting_target) and 1e-4 < d < min_dist:
                 overlap = (min_dist - d) / min_dist
                 mass_ratio = other.mass / (self.mass + other.mass)
-                push = overlap * 1.35 * mass_ratio
+                push = overlap * 0.65 * mass_ratio
                 self.vx -= (dx / d) * push
                 self.vy -= (dy / d) * push
 
@@ -272,8 +306,8 @@ class Agent:
         )
 
         # Плавное затухание скорости, чтобы существа не дёргались на месте
-        self.vx *= 0.80
-        self.vy *= 0.80
+        self.vx *= 0.91
+        self.vy *= 0.91
 
         # 4. Поведенческий автомат (FSM)
         wants_sleep = world.is_night != (self.genes[G_NOCTURNAL] > 0.5)
@@ -311,8 +345,8 @@ class Agent:
                     if np.hypot(tx - self.x, ty - self.y) < 4.5:
                         self.hydration = min(100.0, self.hydration + 25.0)
                 else:
-                    self.vx += self.rng.uniform(-0.08, 0.08)
-                    self.vy += self.rng.uniform(-0.08, 0.08)
+                    self.vx += self.rng.uniform(-0.025, 0.025)
+                    self.vy += self.rng.uniform(-0.025, 0.025)
 
         elif is_hungry:
             ate_carcass = False
@@ -344,11 +378,11 @@ class Agent:
                         sprinting = True
                         self.stamina -= 0.4
                         self.energy -= 0.012
-                    if nearest_prey_dist <= self.radius + nearest_prey.radius + 0.7:
+                    if nearest_prey_dist <= self.radius + nearest_prey.radius + 1.7:
                         self._attack(nearest_prey, carcasses)
                 elif self.is_herbivore:
                     self.state = "foraging"
-                    sr = max(4, int(min(self.genes[G_SENSE], 42) // s))
+                    sr = max(8, int(min(self.genes[G_SENSE], 72) // s))
                     six, siy = ix // s, iy // s
                     sx0, sx1 = max(0, six - sr), min(world.sim_w, six + sr + 1)
                     sy0, sy1 = max(0, siy - sr), min(world.sim_h, siy + sr + 1)
@@ -357,12 +391,12 @@ class Agent:
                         by, bx = np.unravel_index(np.argmax(patch), patch.shape)
                         self._steer((sx0 + bx + 0.5) * s, (sy0 + by + 0.5) * s, weight=0.55)
                     else:
-                        self.vx += self.rng.uniform(-0.08, 0.08)
-                        self.vy += self.rng.uniform(-0.08, 0.08)
+                        self.vx += self.rng.uniform(-0.025, 0.025)
+                        self.vy += self.rng.uniform(-0.025, 0.025)
                 else:
                     self.state = "wandering"
-                    self.vx += self.rng.uniform(-0.06, 0.06)
-                    self.vy += self.rng.uniform(-0.06, 0.06)
+                    self.vx += self.rng.uniform(-0.025, 0.025)
+                    self.vy += self.rng.uniform(-0.025, 0.025)
 
         elif wants_sleep and self.energy > 35.0 and self.hydration > 35.0 and self.oxygen > 70.0:
             self.state = "sleeping"
@@ -377,8 +411,8 @@ class Agent:
             self.stamina = min(100.0, self.stamina + 0.25)
             if 0 < flock_count < 5:
                 self._steer(flock_x / flock_count, flock_y / flock_count, weight=0.10)
-            self.vx += self.rng.uniform(-0.06, 0.06)
-            self.vy += self.rng.uniform(-0.06, 0.06)
+            self.vx += self.rng.uniform(-0.025, 0.025)
+            self.vy += self.rng.uniform(-0.025, 0.025)
 
         margin = 24.0
         if self.x < margin:
@@ -426,10 +460,10 @@ class Agent:
             self.vy = (self.vy / v_norm) * max_spd
 
         # Поворачиваем корпус только при уверенном движении (без кручения волчком на месте)
-        if v_norm > 0.05:
+        if v_norm > 0.04:
             target_angle = float(np.arctan2(self.vy, self.vx))
             diff = (target_angle - self.heading + np.pi) % (2 * np.pi) - np.pi
-            self.heading += diff * 0.35
+            self.heading += diff * 0.18
 
         nx, ny = self.x + self.vx, self.y + self.vy
         if self.is_tile_passable(world, int(nx), int(ny), self.genes):

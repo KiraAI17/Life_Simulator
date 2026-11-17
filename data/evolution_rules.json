@@ -52,6 +52,12 @@
       "legs": 4.0, "lateral_gait": 0.22, "gills": 0.02, "lungs": 0.95,
       "diet_bias": 0.65, "speed": 0.40, "sense": 64.0, "size": 0.95,
       "fur": 0.75, "optimal_temp": 14.0, "nocturnal": 0.35
+    },
+    "aquatic_predator": {
+      "body_width": 0.34, "body_length": 0.86, "shell": 0.12, "claws": 0.25,
+      "legs": 0.0, "lateral_gait": 0.10, "gills": 0.96, "lungs": 0.02,
+      "diet_bias": 0.82, "speed": 0.44, "sense": 68.0, "size": 1.35,
+      "fur": 0.0, "optimal_temp": 16.0, "nocturnal": 0.30
     }
   }
 }

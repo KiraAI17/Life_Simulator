@@ -111,8 +111,12 @@ def build_sprite_rgba(g: np.ndarray) -> np.ndarray:
         accent_col = (115, 26, 36, 255)
         limb_col = outline
     elif g[G_GILLS] > 0.55 and g[G_LUNGS] < 0.45:
-        # Водные рыбы и черви: бирюзово-лазурные
-        body_col = (50, 195, 235, 255)
+        if g[G_DIET] > 0.35:
+            # Акулы тёмно-синие с алыми жабрами
+            body_col = (45, 75, 115, 255)
+        else:
+            # Водные рыбы и черви: бирюзово-лазурные
+            body_col = (50, 195, 235, 255)
         accent_col = (28, 135, 185, 255)
         limb_col = outline
     elif g[G_DIET] > 0.35:

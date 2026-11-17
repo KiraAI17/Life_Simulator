@@ -1,12 +1,15 @@
 import traceback
 import numpy as np
 from PyQt6.QtWidgets import QWidget
-from PyQt6.QtGui import QPainter, QImage, QPixmap, QColor
-from PyQt6.QtCore import Qt, QPointF
+from PyQt6.QtGui import QPainter, QImage, QPixmap, QColor, QPen
+from PyQt6.QtCore import Qt, QPointF, pyqtSignal
 from core.world import World
 
 
 class MapCanvas(QWidget):
+    agent_selected = pyqtSignal(object)
+    map_clicked = pyqtSignal(float, float)
+
     def __init__(self, world: World):
         super().__init__()
         self.world = world
@@ -14,6 +17,8 @@ class MapCanvas(QWidget):
         self.zoom = 1.0
         self.offset = QPointF(0.0, 0.0)
         self.last_mouse_pos = None
+        self.selected_agent = None
+        self._press_pos = QPointF()
         self._sprite_cache: dict[int, QPixmap] = {}
         self.pixmap = QPixmap()
         self._build_static_terrain()
@@ -192,6 +197,13 @@ class MapCanvas(QWidget):
                     pix = QPixmap.fromImage(qimg)
                     self._sprite_cache[aid] = pix
 
+                if getattr(agent, "marked", False) or (agent is self.selected_agent):
+                    ring_col = QColor(255, 230, 40, 230) if (agent is self.selected_agent) else QColor(60, 245, 255,
+                                                                                                       210)
+                    painter.setPen(QPen(ring_col, 0.9))
+                    painter.setBrush(Qt.BrushStyle.NoBrush)
+                    painter.drawEllipse(QPointF(agent.x, agent.y), 6.5, 6.5)
+
                 painter.save()
                 painter.translate(agent.x, agent.y)
                 painter.scale(sprite_scale, sprite_scale)
@@ -216,6 +228,7 @@ class MapCanvas(QWidget):
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self.last_mouse_pos = event.position()
+            self._press_pos = event.position()
 
     def mouseMoveEvent(self, event):
         if self.last_mouse_pos is not None:
@@ -227,8 +240,24 @@ class MapCanvas(QWidget):
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
+            if (event.position() - self._press_pos).manhattanLength() < 5.0:
+                wx = (event.position().x() - self.offset.x()) / self.zoom
+                wy = (event.position().y() - self.offset.y()) / self.zoom
+                # Всегда отправляем мировые координаты клика (нужно для режима спавна новых мобов)
+                self.map_clicked.emit(float(wx), float(wy))
+
+                best = None
+                best_d = max(12.0, 14.0 / self.zoom)
+                for a in self.world.agents:
+                    d = np.hypot(a.x - wx, a.y - wy)
+                    if d < best_d:
+                        best_d = d
+                        best = a
+                self.selected_agent = best
+                self.agent_selected.emit(best)
             self.last_mouse_pos = None
-            self._clamp_camera()
+        self._clamp_camera()
+        self.update()
 
     def _clamp_camera(self):
         if self.width() <= 0 or self.height() <= 0:

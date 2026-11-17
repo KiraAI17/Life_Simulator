@@ -242,12 +242,11 @@ class Agent:
             threat_power = other.genes[G_DIET] + 0.4 * other.genes[G_CLAWS] + 0.3 * other.genes[G_SIZE]
             my_power = self.genes[G_DIET] + 0.4 * self.genes[G_CLAWS] + 0.3 * self.genes[G_SIZE]
 
-            if other.is_predator and threat_power > my_power + 0.25:
+            if other.is_predator and threat_power > my_power + 0.30:
                 if d < nearest_threat_dist:
                     nearest_threat_dist = d
                     nearest_threat = other
-            elif self.is_predator and my_power > threat_power + 0.15:
-                # Проверяем, может ли хищник вообще зайти в клетку, где находится жертва
+            elif self.is_predator and (not other.is_predator or self.energy < 22.0) and my_power > threat_power + 0.10:
                 if d < nearest_prey_dist and self.is_tile_passable(world, int(other.x), int(other.y), self.genes):
                     nearest_prey_dist = d
                     nearest_prey = other
@@ -399,7 +398,7 @@ class Agent:
             dry_resist = 1.0 - 0.55 * self.genes[G_SHELL]
             self.hydration -= (0.024 + max(0.0, (local_temp - 20.0) * 0.0015)) * dry_resist
 
-        if self.energy <= 0 or self.hydration <= 0 or self.age >= self.max_age:
+        if self.energy <= 0 or self.hydration <= 0 or self.age >= (self.max_age * world.lifespan_mult):
             self.alive = False
             carcasses.append({"x": self.x, "y": self.y, "meat": 35.0 * self.genes[G_SIZE]})
             return None
@@ -442,14 +441,14 @@ class Agent:
             self.vy = np.sin(self.heading) * max_spd * 0.65
 
         # 6. Размножение с мутацией вектора генов
-        repro_threshold = 84.0 + population_pressure * 14.0
+        repro_threshold = (84.0 + population_pressure * 14.0) / max(0.4, world.repro_rate_mult)
         if self.energy > repro_threshold and self.hydration > 65.0 and self.oxygen > 70.0 and self.reproduce_cooldown == 0:
             for _ in range(6):
                 cx = self.x + self.rng.uniform(-3.0, 3.0)
                 cy = self.y + self.rng.uniform(-3.0, 3.0)
                 if self.is_tile_passable(world, int(cx), int(cy), self.genes):
                     self.energy -= 38.0
-                    self.reproduce_cooldown = 420
+                    self.reproduce_cooldown = int(420 / max(0.4, world.repro_rate_mult))
                     child_genes = self.config.mutate(self.genes, self.rng)
                     return Agent(cx, cy, genes=child_genes, config=self.config, rng=self.rng)
 

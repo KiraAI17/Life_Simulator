@@ -50,6 +50,12 @@ class World:
         self.light_level = 1.0
         self.is_night = False
 
+        # Живые параметры эксперимента (управляются из UI во время симуляции)
+        self.plant_growth_mult = 1.0  # Множитель скорости роста растений
+        self.repro_rate_mult = 1.0  # Множитель скорости размножения (уменьшает кулдаун и порог энергии)
+        self.lifespan_mult = 1.0  # Множитель продолжительности жизни
+        self.temp_offset = 0.0  # Глобальное потепление / похолодание (°C)
+
         self.agents: list[Agent] = []
         self.carcasses: list[dict] = []
 
@@ -322,7 +328,7 @@ class World:
 
         season_shift = np.sin(phase) * 10.5
         night_chill = sun_height * 2.5
-        self.temperature = self.base_temp + season_shift + night_chill
+        self.temperature = self.base_temp + season_shift + night_chill + self.temp_offset
 
         is_ocean = self.sim_elev < self.sea_level
         is_land = (~is_ocean) & (~self.sim_freshwater) & (self.sim_elev < self.mountain_level)
@@ -350,12 +356,13 @@ class World:
         daylight_growth = max(0.0, sun_height)
         growth = (self.growth_speed * wet_enough * comfort * daylight_growth * (1.0 - self.snow) - 0.00025 * (
                 1.0 - self.moisture)) * dt
+        growth *= self.plant_growth_mult
 
         is_shallow_water = (self.sim_elev >= self.sea_level - 0.035) & (self.sim_elev < self.sea_level)
         vegetated_zone = is_land | is_shallow_water
         self.plants = np.where(vegetated_zone, np.clip(self.plants + growth, 0.0, 1.0), 0.0)
 
-        if self.tick % 10 == 0:
+        if self.tick % 15 == 0:
             dy = self.rng.integers(-2, 3)
             dx = self.rng.integers(-2, 3)
             spores = np.roll(self.plants > 0.7, shift=(dy, dx), axis=(0, 1))

@@ -165,51 +165,58 @@ class MapCanvas(QWidget):
             painter.translate(self.offset)
             painter.scale(self.zoom, self.zoom)
             painter.drawPixmap(0, 0, self.pixmap)
-
+            
             # 1. Пиксель-арт падаль на земле
             painter.setPen(Qt.PenStyle.NoPen)
             for c in self.world.carcasses:
                 cx, cy = int(c["x"]), int(c["y"])
                 painter.fillRect(cx, cy, 2, 1, QColor(145, 35, 35))
                 painter.fillRect(cx, cy + 1, 1, 1, QColor(210, 195, 175))
-
-            # 2. Видимая область карты в координатах мира (не рисуем тех, кто за экраном)
+            
+            # 2. Видимая область карты (не рисуем тех, кто за экраном)
             vis_x0 = max(0, int(-self.offset.x() / self.zoom) - 10)
             vis_y0 = max(0, int(-self.offset.y() / self.zoom) - 10)
             vis_x1 = min(self.world.width, int((self.width() - self.offset.x()) / self.zoom) + 10)
             vis_y1 = min(self.world.height, int((self.height() - self.offset.y()) / self.zoom) + 10)
-
-            # Чистим кэш от умерших агентов раз в 100 тиков
-            if self.world.tick % 100 == 0 and len(self._sprite_cache) > len(self.world.agents) + 50:
-                alive_ids = {id(a) for a in self.world.agents}
-                self._sprite_cache = {k: v for k, v in self._sprite_cache.items() if k in alive_ids}
-
+            
+            alive_hashes = set()
             sprite_scale = float(np.clip(1.25 / max(self.zoom, 0.35), 1.0, 2.5))
+            
             for agent in self.world.agents:
                 if not (vis_x0 <= agent.x <= vis_x1 and vis_y0 <= agent.y <= vis_y1):
                     continue
-
-                aid = id(agent)
-                pix = self._sprite_cache.get(aid)
+                
+                # Кэш по хешу генов (вместо id)
+                gene_hash = hash(agent.genes.tobytes())
+                alive_hashes.add(gene_hash)
+                
+                pix = self._sprite_cache.get(gene_hash)
                 if pix is None:
                     h_s, w_s, _ = agent.sprite_rgba.shape
                     qimg = QImage(agent.sprite_rgba.tobytes(), w_s, h_s, w_s * 4, QImage.Format.Format_RGBA8888)
                     pix = QPixmap.fromImage(qimg)
-                    self._sprite_cache[aid] = pix
-
+                    self._sprite_cache[gene_hash] = pix
+                
+                # Кольцо для выбранного/помеченного
                 if getattr(agent, "marked", False) or (agent is self.selected_agent):
-                    ring_col = QColor(255, 230, 40, 230) if (agent is self.selected_agent) else QColor(60, 245, 255,
-                                                                                                       210)
+                    ring_col = QColor(255, 230, 40, 230) if (agent is self.selected_agent) else QColor(60, 245, 255, 210)
                     painter.setPen(QPen(ring_col, 0.9))
                     painter.setBrush(Qt.BrushStyle.NoBrush)
                     painter.drawEllipse(QPointF(agent.x, agent.y), 6.5, 6.5)
-
+                
                 painter.save()
                 painter.translate(agent.x, agent.y)
                 painter.scale(sprite_scale, sprite_scale)
                 painter.rotate(np.degrees(agent.heading) + 90.0)
                 painter.drawPixmap(-4, -4, pix)
                 painter.restore()
+            
+            #Чистим кэш по хешам раз в 100 тиков
+            if self.world.tick % 60 == 0:
+                dead = [k for k in self._sprite_cache if k not in alive_hashes]
+                for k in dead:
+                    del self._sprite_cache[k]
+                
         except Exception:
             traceback.print_exc()
         finally:

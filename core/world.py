@@ -29,7 +29,7 @@ class World:
         self.peak_temp = -16.0
         self.ocean_temp = 5.0
         self.ideal_plant_temp = 20.0
-        self.growth_speed = 0.0035
+        self.growth_speed = 0.0014
 
         # Детальные массивы полного разрешения (height, width) для точной навигации и рельефа
         self.elevation = np.zeros((height, width), dtype=np.float32)
@@ -194,7 +194,7 @@ class World:
         start_grass = self.rng.uniform(0.20, 0.55, size=(self.sim_h, self.sim_w)).astype(np.float32)
         self.plants = np.where(can_grow_biome, start_grass, 0.0)
 
-        self.spawn_initial_life(land_herbs=120, land_preds=30, aquatic_worms=90)
+        self.spawn_initial_life(land_herbs=140, land_preds=14, foxes=16, aquatic_worms=100, aquatic_preds=12)
 
     # Быстрый доступ к климату/траве по координатам полного мира (x, y)
     def get_temp_at(self, ix: int, iy: int) -> float:
@@ -218,11 +218,11 @@ class World:
 
     def spawn_initial_life(
         self,
-        land_herbs: int = 120,
-        land_preds: int = 20,
-        foxes: int = 24,
-        aquatic_worms: int = 90,
-        aquatic_preds: int = 18,
+        land_herbs: int = 140,
+        land_preds: int = 14,
+        foxes: int = 16,
+        aquatic_worms: int = 100,
+        aquatic_preds: int = 12,
     ):
         self.agents.clear()
         self.carcasses.clear()
@@ -348,20 +348,27 @@ class World:
         self.ice = np.where(is_water, np.clip(self.ice + freeze_delta, 0.0, 1.0), 0.0)
 
         temp_diff = np.abs(self.temperature - self.ideal_plant_temp)
-        comfort = np.clip(1.0 - temp_diff / 22.0, 0.0, 1.0)
-        wet_enough = np.maximum(0.0, self.moisture - 0.32)
-        daylight_growth = max(0.0, sun_height)
-        growth = (self.growth_speed * wet_enough * comfort * daylight_growth * (1.0 - self.snow) - 0.00025 * (
-                1.0 - self.moisture)) * dt
+        comfort = np.clip(1.0 - temp_diff / 24.0, 0.15, 1.0)
+        wet_enough = np.maximum(0.0, self.moisture - 0.30)
+        daylight_growth = max(0.15, sun_height)  # даже ночью корни медленно восстанавливаются
+
+        # Логистический рост с минимальным корневым запасом (0.025) — луг вытаптывается, но не умирает навсегда
+        eff_plants = np.maximum(self.plants, 0.025)
+        biomass_factor = np.clip(eff_plants * (1.15 - eff_plants), 0.03, 0.35)
+        growth = (
+                         0.0022 * wet_enough * comfort * daylight_growth * (
+                             1.0 - 0.7 * self.snow) * biomass_factor * 4.5
+                         - 0.0002 * (1.0 - self.moisture)
+                 ) * dt
         growth *= self.plant_growth_mult
 
-        is_shallow_water = (self.sim_elev >= self.sea_level - 0.035) & (self.sim_elev < self.sea_level)
         vegetated_zone = is_land | is_ocean
-        self.plants = np.where(vegetated_zone, np.clip(self.plants + growth, 0.0, 1.0), 0.0)
+        self.plants = np.where(vegetated_zone, np.clip(self.plants + growth, 0.02, 1.0), 0.0)
 
-        if self.tick % 15 == 0:
+        # Медленное засеивание вытоптанных участков от соседних густых лугов
+        if self.tick % 25 == 0:
             dy = self.rng.integers(-2, 3)
             dx = self.rng.integers(-2, 3)
-            spores = np.roll(self.plants > 0.7, shift=(dy, dx), axis=(0, 1))
-            new_sprouts = spores & is_land & (self.plants == 0.0) & (self.moisture > 0.35) & (self.snow < 0.2)
-            self.plants = np.where(new_sprouts, 0.15, self.plants)
+            spores = np.roll(self.plants > 0.65, shift=(dy, dx), axis=(0, 1))
+            new_sprouts = spores & is_land & (self.plants < 0.04) & (self.moisture > 0.36) & (self.snow < 0.2)
+            self.plants = np.where(new_sprouts, 0.08, self.plants)

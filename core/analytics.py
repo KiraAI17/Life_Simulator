@@ -26,6 +26,7 @@ class EcosystemTracker:
         wolves = 0
         foxes = 0
         aquatic = 0
+        sharks = 0
         crabs = 0
 
         sum_speed = 0.0
@@ -43,7 +44,10 @@ class EcosystemTracker:
             if a.crab_score > 0.55:
                 crabs += 1
             elif g[G_GILLS] > 0.55 and g[G_LUNGS] < 0.45:
-                aquatic += 1
+                if g[G_DIET] > 0.35:
+                    sharks += 1
+                else:
+                    aquatic += 1
             elif is_fox:
                 foxes += 1
             elif a.is_predator:
@@ -62,6 +66,7 @@ class EcosystemTracker:
             "wolves": wolves,
             "foxes": foxes,
             "aquatic": aquatic,
+            "sharks": sharks,
             "crabs": crabs,
             "avg_speed": round(sum_speed / total, 3) if total else 0.0,
             "avg_shell": round(sum_shell / total, 3) if total else 0.0,

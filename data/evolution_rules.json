@@ -54,18 +54,18 @@
       "hue_shift": 0.0, "saturation": 1.0, "brightness": 1.0
     },
     "fox": {
-      "body_width": 0.36, "body_length": 0.78, "shell": 0.08, "claws": 0.15,
-      "legs": 4.0, "lateral_gait": 0.22, "gills": 0.02, "lungs": 0.95,
-      "diet_bias": 0.65, "speed": 0.40, "sense": 64.0, "size": 0.95,
-      "fur": 0.75, "optimal_temp": 14.0, "nocturnal": 0.35,
-      "hue_shift": 0.0, "saturation": 1.0, "brightness": 1.0
+    "body_width": 0.42, "body_length": 0.72, "shell": 0.05, "claws": 0.24,
+    "legs": 4.0, "lateral_gait": 0.25, "gills": 0.0, "lungs": 0.95,
+    "diet_bias": 0.65, "speed": 0.43, "sense": 78.0, "size": 1.0,
+    "fur": 0.68, "optimal_temp": 12.0, "nocturnal": 0.65,
+    "hue_shift": 0.003, "saturation": 1.0, "brightness": 1.0
     },
     "aquatic_predator": {
       "body_width": 0.34, "body_length": 0.86, "shell": 0.12, "claws": 0.25,
       "legs": 0.0, "lateral_gait": 0.10, "gills": 0.96, "lungs": 0.02,
-      "diet_bias": 0.82, "speed": 0.44, "sense": 68.0, "size": 1.35,
-      "fur": 0.0, "optimal_temp": 16.0, "nocturnal": 0.30,
-      "hue_shift": 0.0, "saturation": 1.0, "brightness": 1.0
+      "diet_bias": 0.82, "speed": 0.44, "sense": 68.0, "size": 1.15,
+      "fur": 0.0, "optimal_temp": 9.0, "nocturnal": 0.30,
+      "hue_shift": 0.00, "saturation": 1.0, "brightness": 1.0
     }
   }
 }

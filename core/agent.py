@@ -13,7 +13,8 @@ if TYPE_CHECKING:
 
 
 class Agent:
-    def __init__(self, x: float, y: float, genes: np.ndarray, config: EvolutionConfig, rng: np.random.Generator | None = None):
+    def __init__(self, x: float, y: float, genes: np.ndarray, config: EvolutionConfig,
+                 rng: np.random.Generator | None = None):
         self.rng = rng or np.random.default_rng()
         self.config = config
         self.genes = genes.astype(np.float32)
@@ -47,13 +48,16 @@ class Agent:
         self.sprite_rgba = build_sprite_rgba(self.genes)
 
     @property
-    def is_predator(self) -> bool: return bool(self.genes[G_DIET] > 0.35)
+    def is_predator(self) -> bool:
+        return bool(self.genes[G_DIET] > 0.35)
 
     @property
-    def is_scavenger(self) -> bool: return bool(-0.35 <= self.genes[G_DIET] <= 0.45)
+    def is_scavenger(self) -> bool:
+        return bool(-0.35 <= self.genes[G_DIET] <= 0.45)
 
     @property
-    def is_herbivore(self) -> bool: return bool(self.genes[G_DIET] < 0.25)
+    def is_herbivore(self) -> bool:
+        return bool(self.genes[G_DIET] < 0.25)
 
     def can_breathe_at(self, is_water: bool) -> bool:
         return bool(self.genes[G_GILLS] >= 0.42) if is_water else bool(self.genes[G_LUNGS] >= 0.42)
@@ -63,7 +67,7 @@ class Agent:
         if ix < 4 or ix >= world.width - 4 or iy < 4 or iy >= world.height - 4:
             return False
         elev = world.elevation[iy, ix]
-        if elev >= world.mountain_level:
+        if elev >= world.mountain_level - 0.11:
             return False
         is_water = (elev < world.sea_level) or world.freshwater[iy, ix]
         if is_water:
@@ -96,7 +100,8 @@ class Agent:
         y0, y1 = max(4, iy - r), min(world.height - 4, iy + r + 1)
         sub_elev = world.elevation[y0:y1, x0:x1]
         sub_fw = world.freshwater[y0:y1, x0:x1]
-        mask = (sub_elev < world.sea_level) | sub_fw if want_water else (sub_elev >= world.sea_level) & (sub_elev < world.mountain_level) & (~sub_fw)
+        mask = (sub_elev < world.sea_level) | sub_fw if want_water else (sub_elev >= world.sea_level) & (
+                    sub_elev < world.mountain_level) & (~sub_fw)
         coords = np.argwhere(mask)
         if len(coords) > 0:
             dists = (coords[:, 0] + y0 - iy) ** 2 + (coords[:, 1] + x0 - ix) ** 2
@@ -113,7 +118,8 @@ class Agent:
         final_dmg = max(1.5, raw_dmg * (1.0 - 0.68 * target.genes[G_SHELL]))
         target.hp -= final_dmg
         if target.genes[G_CLAWS] > 0.25 or target.genes[G_SHELL] > 0.45:
-            self.hp -= max(0.0, (4.0 * target.genes[G_CLAWS] + 2.5 * target.genes[G_SHELL]) * (1.0 - 0.5 * self.genes[G_SHELL]))
+            self.hp -= max(0.0, (4.0 * target.genes[G_CLAWS] + 2.5 * target.genes[G_SHELL]) * (
+                        1.0 - 0.5 * self.genes[G_SHELL]))
         if target.hp <= 0:
             target.alive = False
             meat_total = 45.0 * target.genes[G_SIZE] * (1.0 - 0.35 * target.genes[G_SHELL])
@@ -136,7 +142,29 @@ class Agent:
         self.hydration = 90.0
         self.oxygen = 100.0
 
-    def update(self, world: "World", neighbors: list["Agent"], carcasses: list[dict], population_pressure: float) -> "Agent | None":
+    def _is_native_medium(self, world: "World", ix: int, iy: int) -> bool:
+        """Проверяет, может ли существо нормально дышать в клетке (ix, iy)."""
+        ix = int(np.clip(ix, 0, world.width - 1))
+        iy = int(np.clip(iy, 0, world.height - 1))
+        is_water = (world.elevation[iy, ix] < world.sea_level) or world.freshwater[iy, ix]
+        if is_water and (world.get_ice_at(ix, iy) > 0.78) and (world.get_temp_at(ix, iy) < -0.5):
+            is_water = False
+        return self.can_breathe_at(is_water)
+
+    def _has_safe_path(self, world: "World", tx: float, ty: float, steps: int = 6) -> bool:
+        """Проверяет по точкам отрезка, не придётся ли плыть/идти через среду без кислорода."""
+        for i in range(1, steps + 1):
+            t = i / steps
+            px = int(self.x + (tx - self.x) * t)
+            py = int(self.y + (ty - self.y) * t)
+            if not self.is_tile_passable(world, px, py, self.genes):
+                return False
+            if not self._is_native_medium(world, px, py):
+                return False
+        return True
+
+    def update(self, world: "World", neighbors: list["Agent"], carcasses: list[dict],
+               population_pressure: float) -> "Agent | None":
         if not self.alive:
             return None
         self.age += 1
@@ -173,8 +201,11 @@ class Agent:
         nearest_threat_dist, nearest_prey_dist = self.genes[G_SENSE], self.genes[G_SENSE]
         flock_x, flock_y, flock_count = 0.0, 0.0, 0
 
+        am_in_native = self._is_native_medium(world, ix, iy)
+
         for other in neighbors:
-            if other is self or not other.alive: continue
+            if other is self or not other.alive:
+                continue
             dx, dy = other.x - self.x, other.y - self.y
             d = np.hypot(dx, dy)
             min_dist = (self.radius + other.radius) * 1.15
@@ -183,34 +214,52 @@ class Agent:
                 push = ((min_dist - d) / min_dist) * 0.65 * (other.mass / (self.mass + other.mass))
                 self.vx -= (dx / d) * push
                 self.vy -= (dy / d) * push
-            if d > self.genes[G_SENSE]: continue
+            if d > self.genes[G_SENSE]:
+                continue
 
             threat_power = other.genes[G_DIET] + 0.4 * other.genes[G_CLAWS] + 0.3 * other.genes[G_SIZE]
             my_power = self.genes[G_DIET] + 0.4 * self.genes[G_CLAWS] + 0.3 * self.genes[G_SIZE]
 
+            # 1. Угроза: спящий хищник не пугает (если не наступить на него < 4 px), и угроза из чужой среды не пугает
+            other_sleeping = getattr(other, "state", "") == "sleeping"
             if other.is_predator and threat_power > my_power + 0.30 and d < nearest_threat_dist:
-                nearest_threat_dist, nearest_threat = d, other
-            elif self.is_predator and (not other.is_predator or self.energy < 22.0) and my_power > threat_power + 0.10 and d < nearest_prey_dist and self.is_tile_passable(world, int(other.x), int(other.y), self.genes):
+                if (not other_sleeping or d < 4.5) and other._is_native_medium(world, ix, iy):
+                    nearest_threat_dist, nearest_threat = d, other
+
+            # 2. Добыча: охотимся только если путь до жертвы лежит в нашей родной среде
+            elif (
+                    self.is_predator
+                    and am_in_native
+                    and (not other.is_predator or self.energy < 22.0)
+                    and my_power > threat_power - 0.15
+                    and d < nearest_prey_dist
+                    and self._has_safe_path(world, other.x, other.y)
+            ):
                 nearest_prey_dist, nearest_prey = d, other
+
             elif abs(other.genes[G_DIET] - self.genes[G_DIET]) < 0.35 and 7.0 < d < 22.0:
                 flock_x += other.x
                 flock_y += other.y
                 flock_count += 1
 
         effective_temp = local_temp + self.genes[G_FUR] * 16.0
-        organ_cost = self.genes[G_SHELL] * costs["shell_maintenance"] + self.genes[G_CLAWS] * costs["claw_maintenance"] + self.genes[G_FUR] * costs["fur_maintenance"]
+        organ_cost = self.genes[G_SHELL] * costs["shell_maintenance"] + self.genes[G_CLAWS] * costs[
+            "claw_maintenance"] + self.genes[G_FUR] * costs["fur_maintenance"]
         move_mult = 0.5 if (self.is_predator and self.state == "wandering") else 1.0
-        metabolism = costs["base_metabolism"] * (self.genes[G_SIZE] ** costs["size_exponent"]) + costs["speed_cost"] * move_mult * (self.genes[G_SPEED] ** costs["speed_exponent"]) + organ_cost + abs(effective_temp - self.genes[G_OPT_TEMP]) * costs["temp_stress_factor"]
+        metabolism = costs["base_metabolism"] * (self.genes[G_SIZE] ** costs["size_exponent"]) + costs[
+            "speed_cost"] * move_mult * (self.genes[G_SPEED] ** costs["speed_exponent"]) + organ_cost + abs(
+            effective_temp - self.genes[G_OPT_TEMP]) * costs["temp_stress_factor"]
 
         self.vx *= 0.91
         self.vy *= 0.91
 
         wants_sleep = world.is_night != (self.genes[G_NOCTURNAL] > 0.5)
         sprinting = False
-        is_thirsty = (not in_liquid_water) and ((self.hydration < 50.0) or (self.state == "drinking" and self.hydration < 88.0))
+        is_thirsty = (not in_liquid_water) and (
+                    (self.hydration < 50.0) or (self.state == "drinking" and self.hydration < 88.0))
         is_hungry = (self.energy < 68.0) or (self.state in ("foraging", "hunting") and self.energy < 82.0)
 
-        if self.oxygen < 45.0:
+        if self.oxygen < 65.0 or (self.state == "suffocating" and self.oxygen < 85.0):
             self.state = "suffocating"
             self._seek_safe_medium(world, ix, iy, want_water=not in_liquid_water)
             sprinting = True
@@ -221,26 +270,40 @@ class Agent:
                 sprinting, self.stamina, self.energy = True, self.stamina - 0.45, self.energy - 0.012
         elif is_thirsty:
             self.state = "drinking"
-            if world.get_snow_at(ix, iy) > 0.4:
-                self.hydration = min(100.0, self.hydration + 8.0)
+            if world.get_snow_at(ix, iy) > 0.35:
+                self.hydration = min(100.0, self.hydration + 10.0)
             else:
-                sr = max(4, int(min(self.genes[G_SENSE], 48) // s))
+                sr = 45  # Дальний поиск водоёмов (до 180 px)
                 six, siy = ix // s, iy // s
-                water_cells = np.argwhere(world.sim_freshwater[max(0, siy - sr):min(world.sim_h, siy + sr + 1), max(0, six - sr):min(world.sim_w, six + sr + 1)])
+                y_start, y_end = max(0, siy - sr), min(world.sim_h, siy + sr + 1)
+                x_start, x_end = max(0, six - sr), min(world.sim_w, six + sr + 1)
+                water_cells = np.argwhere(world.sim_freshwater[y_start:y_end, x_start:x_end])
                 if len(water_cells) > 0:
-                    wy, wx = water_cells[0]
-                    tx, ty = (max(0, six - sr) + wx + 0.5) * s, (max(0, siy - sr) + wy + 0.5) * s
-                    self._steer(tx, ty, weight=0.65)
-                    if np.hypot(tx - self.x, ty - self.y) < 4.5:
-                        self.hydration = min(100.0, self.hydration + 25.0)
+                    # Берём БЛИЖАЙШУЮ клетку пресной воды, а не первую в массиве
+                    dists_sq = (water_cells[:, 0] + y_start - siy) ** 2 + (water_cells[:, 1] + x_start - six) ** 2
+                    wy, wx = water_cells[int(np.argmin(dists_sq))]
+                    tx = (x_start + wx + 0.5) * s
+                    ty = (y_start + wy + 0.5) * s
+                    self._steer(tx, ty, weight=0.95)
+                    if np.hypot(tx - self.x, ty - self.y) < 6.0:
+                        self.hydration = min(100.0, self.hydration + 30.0)
+                        self.vx = -self.vx * 1.1 + self.rng.uniform(-0.12, 0.12)
+                        self.vy = -self.vy * 1.1 + self.rng.uniform(-0.12, 0.12)
                 else:
-                    self.vx += self.rng.uniform(-0.025, 0.025)
-                    self.vy += self.rng.uniform(-0.025, 0.025)
+                    # Если озёр рядом нет — идём в сторону максимальной влажности (к низинам/рекам)
+                    moist_patch = world.moisture[y_start:y_end, x_start:x_end]
+                    if moist_patch.size > 0:
+                        my, mx = np.unravel_index(int(np.argmax(moist_patch)), moist_patch.shape)
+                        self._steer((x_start + mx + 0.5) * s, (y_start + my + 0.5) * s, weight=0.75)
         elif is_hungry:
             ate_carcass = False
             if self.is_predator or self.is_scavenger:
                 for c in carcasses:
-                    if c["meat"] > 0 and np.hypot(c["x"] - self.x, c["y"] - self.y) < self.genes[G_SENSE]:
+                    if (
+                            c["meat"] > 0
+                            and np.hypot(c["x"] - self.x, c["y"] - self.y) < self.genes[G_SENSE]
+                            and self._has_safe_path(world, c["x"], c["y"])
+                    ):
                         self.state = "foraging"
                         self._steer(c["x"], c["y"], weight=0.75)
                         if np.hypot(c["x"] - self.x, c["y"] - self.y) <= self.radius + 1.5:
@@ -250,12 +313,14 @@ class Agent:
                         ate_carcass = True
                         break
             if not ate_carcass:
-                if self.is_herbivore and world.get_plant_at(ix, iy) > 0.14:
+                if self.is_herbivore and world.get_plant_at(ix, iy) > 0.16:
                     self.state = "foraging"
-                    eaten = world.eat_plant_at(ix, iy, 0.8)
-                    self.energy = min(100.0, self.energy + eaten * 48.0 * np.clip(1.0 - max(0.0, self.genes[G_DIET]), 0.3, 1.0))
-                    self.vx *= 0.4
-                    self.vy *= 0.4
+                    eaten = world.eat_plant_at(ix, iy, 0.35)
+                    self.energy = min(100.0,
+                                      self.energy + eaten * 36.0 * np.clip(1.0 - max(0.0, self.genes[G_DIET]), 0.3,
+                                                                           1.0))
+                    self.vx *= 0.55
+                    self.vy *= 0.55
                 elif self.is_predator and nearest_prey is not None:
                     self.state = "hunting"
                     self._steer(nearest_prey.x, nearest_prey.y, weight=0.9)
@@ -267,7 +332,8 @@ class Agent:
                     self.state = "foraging"
                     sr = max(8, int(min(self.genes[G_SENSE], 72) // s))
                     six, siy = ix // s, iy // s
-                    patch = world.plants[max(0, siy - sr):min(world.sim_h, siy + sr + 1), max(0, six - sr):min(world.sim_w, six + sr + 1)]
+                    patch = world.plants[max(0, siy - sr):min(world.sim_h, siy + sr + 1),
+                            max(0, six - sr):min(world.sim_w, six + sr + 1)]
                     if patch.size > 0 and patch.max() > 0.18:
                         by, bx = np.unravel_index(np.argmax(patch), patch.shape)
                         self._steer((max(0, six - sr) + bx + 0.5) * s, (max(0, siy - sr) + by + 0.5) * s, weight=0.55)
@@ -278,25 +344,39 @@ class Agent:
                     self.state = "wandering"
                     self.vx += self.rng.uniform(-0.025, 0.025)
                     self.vy += self.rng.uniform(-0.025, 0.025)
-        elif wants_sleep and self.energy > 35.0 and self.hydration > 35.0 and self.oxygen > 70.0:
+        elif wants_sleep and am_in_native and nearest_prey is None and self.energy > 35.0 and self.hydration > 35.0 and self.oxygen > 75.0:
             self.state = "sleeping"
             self.energy -= metabolism * 0.35
-            if not in_liquid_water: self.hydration -= 0.012
+            if not in_liquid_water:
+                self.hydration -= 0.012
             self.stamina = min(100.0, self.stamina + 0.5)
             return None
+        elif local_temp < self.genes[G_OPT_TEMP] - 11.0 and self.energy < 75.0:
+            # Сезонная миграция в более тёплые широты (к центру/югу карты)
+            self.state = "migrating"
+            self._steer(self.x + self.rng.uniform(-15, 15), min(world.height - 30.0, self.y + 45.0), weight=0.65)
         else:
             self.state = "wandering"
             self.stamina = min(100.0, self.stamina + 0.25)
             if 0 < flock_count < 5:
                 self._steer(flock_x / flock_count, flock_y / flock_count, weight=0.10)
-            self.vx += self.rng.uniform(-0.025, 0.025)
-            self.vy += self.rng.uniform(-0.025, 0.025)
+            if self.is_predator:
+                # Патрулирование территории по курсу с плавным подруливанием
+                self.vx += np.cos(self.heading) * 0.022 + self.rng.uniform(-0.015, 0.015)
+                self.vy += np.sin(self.heading) * 0.022 + self.rng.uniform(-0.015, 0.015)
+            else:
+                self.vx += self.rng.uniform(-0.025, 0.025)
+                self.vy += self.rng.uniform(-0.025, 0.025)
 
         margin = 24.0
-        if self.x < margin: self.vx += 0.08
-        elif self.x > world.width - margin: self.vx -= 0.08
-        if self.y < margin: self.vy += 0.08
-        elif self.y > world.height - margin: self.vy -= 0.08
+        if self.x < margin:
+            self.vx += 0.08
+        elif self.x > world.width - margin:
+            self.vx -= 0.08
+        if self.y < margin:
+            self.vy += 0.08
+        elif self.y > world.height - margin:
+            self.vy -= 0.08
 
         self.energy -= metabolism
         if in_liquid_water:
@@ -310,10 +390,11 @@ class Agent:
             return None
 
         shell_penalty = 1.0 - costs["shell_weight_speed_penalty"] * self.genes[G_SHELL]
-        medium_mult = np.clip(0.65 + 0.45 * self.genes[G_GILLS] - 0.25 * self.genes[G_WIDTH], 0.45, 1.25) if in_liquid_water else (0.45 + 0.55 * np.clip(self.genes[G_LEGS] / 4.0, 0.0, 1.2))
+        medium_mult = np.clip(0.65 + 0.45 * self.genes[G_GILLS] - 0.25 * self.genes[G_WIDTH], 0.45,
+                              1.25) if in_liquid_water else (0.45 + 0.55 * np.clip(self.genes[G_LEGS] / 4.0, 0.0, 1.2))
         slope_penalty = 0.75 if elev > world.mountain_level - 0.10 else 1.0
         snow_penalty = 0.72 if world.get_snow_at(ix, iy) > 0.5 else 1.0
-        sprint_mult = 1.55 if sprinting else (0.45 if (self.is_predator and self.state == "wandering") else 1.0)
+        sprint_mult = 1.55 if sprinting else (0.72 if (self.is_predator and self.state == "wandering") else 1.0)
         max_spd = self.genes[G_SPEED] * shell_penalty * medium_mult * slope_penalty * snow_penalty * sprint_mult
 
         v_norm = np.hypot(self.vx, self.vy)
@@ -333,12 +414,15 @@ class Agent:
             self.vx = np.cos(self.heading) * max_spd * 0.65
             self.vy = np.sin(self.heading) * max_spd * 0.65
 
-        repro_threshold = (84.0 + population_pressure * 14.0) / max(0.4, world.repro_rate_mult)
+        base_repro = 84.0 if self.is_herbivore else 86.0
+        repro_threshold = (base_repro + population_pressure * 14.0) / max(0.4, world.repro_rate_mult)
         if self.energy > repro_threshold and self.hydration > 65.0 and self.oxygen > 70.0 and self.reproduce_cooldown == 0:
             for _ in range(6):
                 cx, cy = self.x + self.rng.uniform(-3.0, 3.0), self.y + self.rng.uniform(-3.0, 3.0)
                 if self.is_tile_passable(world, int(cx), int(cy), self.genes):
-                    self.energy -= 38.0
-                    self.reproduce_cooldown = int(420 / max(0.4, world.repro_rate_mult))
-                    return Agent(cx, cy, genes=self.config.mutate(self.genes, self.rng), config=self.config, rng=self.rng)
+                    self.energy -= 42.0 if self.is_herbivore else 45.0
+                    base_cd = 500 if self.is_herbivore else 650
+                    self.reproduce_cooldown = int(base_cd / max(0.4, world.repro_rate_mult))
+                    return Agent(cx, cy, genes=self.config.mutate(self.genes, self.rng), config=self.config,
+                                 rng=self.rng)
         return None

@@ -48,6 +48,7 @@ class PopulationChartWidget(QWidget):
             animal_series = [
                 ("herbivores", QColor(235, 215, 145), "Трав"),
                 ("aquatic", QColor(65, 200, 235), "Рыбы"),
+                ("sharks", QColor(70, 115, 195), "Акулы"),
                 ("wolves", QColor(150, 160, 175), "Волки"),
                 ("foxes", QColor(240, 115, 40), "Лисы"),
                 ("crabs", QColor(225, 55, 75), "Крабы"),
@@ -212,7 +213,11 @@ class MainWindow(QMainWindow):
         self.sp_worms = QSpinBox()
         self.sp_worms.setRange(0, 300)
         self.sp_worms.setValue(90)
-        init_form.addRow("Водные виды:", self.sp_worms)
+        init_form.addRow("Рыбы:", self.sp_worms)
+        self.sp_sharks = QSpinBox()
+        self.sp_sharks.setRange(0, 100)
+        self.sp_sharks.setValue(12)
+        init_form.addRow("Акулы:", self.sp_sharks)
         btn_restart = QPushButton("Перезапустить мир")
         btn_restart.clicked.connect(self.restart_world)
         init_form.addRow(btn_restart)
@@ -238,7 +243,7 @@ class MainWindow(QMainWindow):
         spawn_row = QHBoxLayout()
         self.chk_spawn_mode = QCheckBox("Спавн кликом:")
         self.cb_spawn_arch = QComboBox()
-        self.cb_spawn_arch.addItems(["fox", "land_grazer", "land_stalker", "aquatic_worm"])
+        self.cb_spawn_arch.addItems(["fox", "land_grazer", "land_stalker", "aquatic_worm", "aquatic_predator"])
         spawn_row.addWidget(self.chk_spawn_mode)
         spawn_row.addWidget(self.cb_spawn_arch)
         insp_layout.addLayout(spawn_row)
@@ -270,7 +275,7 @@ class MainWindow(QMainWindow):
 
         morph_row = QHBoxLayout()
         self.cb_morph_arch = QComboBox()
-        self.cb_morph_arch.addItems(["fox", "land_grazer", "land_stalker", "aquatic_worm"])
+        self.cb_morph_arch.addItems(["fox", "land_grazer", "land_stalker", "aquatic_worm", "aquatic_predator"])
         self.cb_morph_arch.setEnabled(False)
         self.btn_apply_arch = QPushButton("Превратить")
         self.btn_apply_arch.setEnabled(False)
@@ -484,7 +489,10 @@ class MainWindow(QMainWindow):
             if a.crab_score > 0.55:
                 kind = "crabs"
             elif g[G_GILLS] > 0.55 and g[G_LUNGS] < 0.45:
-                kind = "aquatic"
+                if g[G_DIET] > 0.35:
+                    kind = "sharks"
+                else:
+                    kind = "aquatic"
             elif is_fox:
                 kind = "foxes"
             elif a.is_predator:
@@ -516,6 +524,12 @@ class MainWindow(QMainWindow):
 
     def set_speed(self, spd: int):
         self.speed_mult = spd
+        if spd == 1:
+            self.timer.setInterval(33)
+        elif spd == 2:
+            self.timer.setInterval(22)
+        else:
+            self.timer.setInterval(16)
 
     def restart_world(self):
         self.world.preset = self.cb_preset.currentText()
@@ -526,6 +540,7 @@ class MainWindow(QMainWindow):
             land_preds=self.sp_wolves.value(),
             foxes=self.sp_foxes.value(),
             aquatic_worms=self.sp_worms.value(),
+            aquatic_preds=self.sp_sharks.value(),
         )
         self._on_live_params_changed()
         self.tracker.reset()
@@ -572,6 +587,7 @@ class MainWindow(QMainWindow):
                 if not data: return
 
             p = data.get("parameters", {})
+            p.get("init_sharks", 12)
             self.paused = True
             self.btn_pause.setText("Продолжить")
             self.cb_preset.setCurrentText(p.get("preset", "archipelago"))
@@ -595,15 +611,23 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Ошибка загрузки", str(e))
 
     def tick(self):
-        if self.paused: return
+        if self.paused:
+            return
         t0 = time.perf_counter()
+        steps_done = 0
+        # Разрешаем до 28 мс на симуляцию (из 33 мс кадра), чтобы x5 и x10 реально ускоряли мир
+        time_budget = 0.014 if self.speed_mult == 1 else 0.028
         for _ in range(self.speed_mult):
             self.world.step()
             self.tracker.record(self.world)
-            if (time.perf_counter() - t0) > 0.014: break
+            steps_done += 1
+            if (time.perf_counter() - t0) > time_budget:
+                break
         self.canvas.update()
-        if self.world.tick % 10 == 0: self.chart.update()
-        if self.world.tick % 60 == 0: self.canvas.update_texture()
+        if self.world.tick % 10 == 0:
+            self.chart.update()
+        if self.world.tick % 60 == 0:
+            self.canvas.update_texture()
         self.update_status()
 
     def update_status(self):

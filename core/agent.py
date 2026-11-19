@@ -387,7 +387,7 @@ class Agent:
             if 0 < flock_count < 5:
                 self._steer(flock_x / flock_count, flock_y / flock_count, weight=0.10)
             
-                # 🦈 ВОДНЫЕ ХИЩНИКИ (акулы) — активное патрулирование широкими дугами
+                #ВОДНЫЕ ХИЩНИКИ (акулы) — активное патрулирование широкими дугами
                 if self.is_predator and self.genes[G_GILLS] > 0.7 and self.genes[G_LEGS] < 2.0:
                     self.state = "patrolling"
                     # Увеличенная скорость патруля (0.085 вместо 0.065)
@@ -413,7 +413,7 @@ class Agent:
                         self.genes[G_LEGS] >= 4.0 and
                         self.genes[G_GILLS] < 0.4)
 
-                    # 🐺 МЕХАНИКА "НЮХА": волк долго без еды -> с шансом 2.5% чует добычу
+                    #МЕХАНИКА "НЮХА": волк долго без еды -> с шансом 2.5% чует добычу
                     if is_wolf and self.ticks_without_food >= 250:
                         self.state = "sniffing"
                         
@@ -449,7 +449,7 @@ class Agent:
                             self.vx += np.cos(self.heading) * 0.065 + self.rng.uniform(-0.025, 0.025)
                             self.vy += np.sin(self.heading) * 0.065 + self.rng.uniform(-0.025, 0.025)
 
-                    # 🐺 НАЗЕМНЫЕ ХИЩНИКИ (волки, лисы) — АКТИВНЫЙ ПОИСК ТРАВЯДНЫХ (обычный патруль)
+    
                     elif self.is_predator:
                         self.state = "patrolling"
                         # Увеличенная скорость патруля (0.065 вместо 0.022)
@@ -466,7 +466,6 @@ class Agent:
                             self.vx *= 1.9
                             self.vy *= 1.9
                     
-                    # 🐑 ТРАВЯДНЫЕ — обычное блуждание
                     else:
                         self.state = "wandering"
                         self.vx += self.rng.uniform(-0.025, 0.025)
@@ -513,7 +512,6 @@ class Agent:
         nx, ny = self.x + self.vx, self.y + self.vy
         next_passable = self.is_tile_passable(world, int(nx), int(ny), self.genes)
 
-        # 🚫 Детектор застревания: если клетка непроходима ИЛИ это вода (для травоядных без жабр)
         is_water_ahead = (world.elevation[int(np.clip(ny, 0, world.height - 1)), int(np.clip(nx, 0, world.width - 1))] < world.sea_level)
         avoid_water = (not self.is_predator) and (self.genes[G_GILLS] < 0.42) and is_water_ahead
 
@@ -521,7 +519,6 @@ class Agent:
             self.x, self.y = nx, ny
             self.stuck_counter = 0  # Сброс счётчика
         else:
-            # 🔄 УМНЫЙ РАЗВОРОТ: проверяем обе стороны и выбираем проходиму
             self.stuck_counter += 1
             
             # Пробуем поворот в обе стороны на 60°
@@ -545,7 +542,6 @@ class Agent:
                 self.vx = np.cos(self.heading) * max_spd * 0.5
                 self.vy = np.sin(self.heading) * max_spd * 0.5
             
-            # 🆘 Если застряли 8+ тиков подряд — паника и разворот на 180°
             if self.stuck_counter >= 8:
                 self.heading += np.pi + self.rng.uniform(-0.3, 0.3)
                 self.vx = np.cos(self.heading) * max_spd

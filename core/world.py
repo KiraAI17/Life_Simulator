@@ -309,7 +309,6 @@ class World:
 
             # Спавн стад травоядных с УВЕЛИЧЕННЫМ расстоянием между особями
             herb_centers = pick_centers(4)
-            # spread=90 вместо 45 — травоядные рассредоточены по большей площади
             spawn_group("land_grazer", land_herbs, herb_centers, spread=90.0)
 
             # Хищники спавнятся в определённом направлении от стад
@@ -346,15 +345,12 @@ class World:
                     found_center = (float(pred_cy), float(pred_cx))
                     break
                 
-                # Если нашли подходящую точку — добавляем
                 if found_center is not None:
                     pred_centers.append(found_center)
 
             # Распределяем хищников по выбранным центрам
             if pred_centers:
-                # Волки — более сгруппированы (spread=35)
                 spawn_group("land_stalker", land_preds, pred_centers, spread=40.0)
-                # Лисы — более рассредоточены (spread=50)
                 spawn_group("fox", foxes, pred_centers, spread=60.0)
         
         ocean_mask = self.elevation < self.sea_level - 0.015
@@ -460,7 +456,6 @@ class World:
         wet_enough = np.maximum(0.0, self.moisture - 0.30)
         daylight_growth = max(0.15, sun_height)  # даже ночью корни медленно восстанавливаются
 
-        # Логистический рост с минимальным корневым запасом (0.025) — луг вытаптывается, но не умирает навсегда
         eff_plants = np.maximum(self.plants, 0.025)
         biomass_factor = np.clip(eff_plants * (1.15 - eff_plants), 0.03, 0.35)
         growth = (

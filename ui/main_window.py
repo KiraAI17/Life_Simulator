@@ -482,18 +482,18 @@ class MainWindow(QMainWindow):
                 self.canvas.set_mode("plants")
                 self.cb_view_mode.setCurrentText("plants")
             return
-        # Если этот вид уже помечен — снимаем метки (toggle)
+        # Если этот вид уже помечен снимаем метки (toggle)
         if self._marked_species == key:
             for a in self.world.agents:
                 a.marked = False
             self._marked_species = None
             self.canvas.update()
             return
-        # Иначе — сначала снимаем старые метки, потом ставим новые
+        # Иначе сначала снимаем старые метки, потом ставим новые
         for a in self.world.agents:
             a.marked = False
         
-        # 🦈 Специальная логика для "crabs": если крабов нет, подсвечиваем самого крабистого
+        # Специальная логика для "crabs": если крабов нет, подсвечиваем самого крабистого
         if key == "crabs":
             crab_count = sum(1 for a in self.world.agents if a.crab_score > 0.55)
             if crab_count == 0:

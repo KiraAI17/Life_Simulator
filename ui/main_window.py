@@ -493,7 +493,7 @@ class MainWindow(QMainWindow):
         for a in self.world.agents:
             a.marked = False
         
-        # 🦈 Специальная логика для "crabs": если крабов нет, подсвечиваем самого крабистого
+        # Специальная логика для "crabs": если крабов нет, подсвечиваем самого крабистого
         if key == "crabs":
             crab_count = sum(1 for a in self.world.agents if a.crab_score > 0.55)
             if crab_count == 0:

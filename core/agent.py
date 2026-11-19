@@ -159,13 +159,13 @@ class Agent:
 
     def _has_safe_path(self, world: "World", tx: float, ty: float, steps: int = 6) -> bool:
         """Проверяет по точкам отрезка, не придётся ли плыть/идти через среду без кислорода."""
-        # Чисто водные (акулы, рыбы) — проверяем только конечную точку,
+        # Чисто водные проверяем только конечную точку,
         if self.genes[G_GILLS] > 0.7 and self.genes[G_LEGS] < 2.0:
             px = int(np.clip(tx, 0, world.width - 1))
             py = int(np.clip(ty, 0, world.height - 1))
             return self.is_tile_passable(world, px, py, self.genes) and self._is_native_medium(world, px, py)
         
-        # Для остальных — полная проверка по точкам отрезка
+        # Для остальных  полная проверка по точкам отрезка
         for i in range(1, steps + 1):
             t = i / steps
             px = int(self.x + (tx - self.x) * t)
@@ -314,7 +314,7 @@ class Agent:
                         self.vx = -self.vx * 1.1 + self.rng.uniform(-0.12, 0.12)
                         self.vy = -self.vy * 1.1 + self.rng.uniform(-0.12, 0.12)
                 else:
-                    # Если озёр рядом нет — идём в сторону максимальной влажности (к низинам/рекам)
+                    # Если озёр рядом нет идём в сторону максимальной влажности (к низинам/рекам)
                     moist_patch = world.moisture[y_start:y_end, x_start:x_end]
                     if moist_patch.size > 0:
                         my, mx = np.unravel_index(int(np.argmax(moist_patch)), moist_patch.shape)
@@ -387,7 +387,7 @@ class Agent:
             if 0 < flock_count < 5:
                 self._steer(flock_x / flock_count, flock_y / flock_count, weight=0.10)
             
-                # 🦈 ВОДНЫЕ ХИЩНИКИ (акулы) — активное патрулирование широкими дугами
+                # ВОДНЫЕ ХИЩНИКИ (акулы) активное патрулирование широкими дугами
                 if self.is_predator and self.genes[G_GILLS] > 0.7 and self.genes[G_LEGS] < 2.0:
                     self.state = "patrolling"
                     # Увеличенная скорость патруля (0.085 вместо 0.065)
@@ -441,7 +441,7 @@ class Agent:
                         # Идём к цели "нюха"
                         if self.sniff_target is not None:
                             self._steer(self.sniff_target[0], self.sniff_target[1], weight=0.8)
-                            # Если дошли — сбрасываем цель
+                            # Если дошли сбрасываем цель
                             if np.hypot(self.sniff_target[0] - self.x, self.sniff_target[1] - self.y) < 10.0:
                                 self.sniff_target = None
                         else:
@@ -449,24 +449,22 @@ class Agent:
                             self.vx += np.cos(self.heading) * 0.065 + self.rng.uniform(-0.025, 0.025)
                             self.vy += np.sin(self.heading) * 0.065 + self.rng.uniform(-0.025, 0.025)
 
-                    # 🐺 НАЗЕМНЫЕ ХИЩНИКИ (волки, лисы) — АКТИВНЫЙ ПОИСК ТРАВЯДНЫХ (обычный патруль)
                     elif self.is_predator:
                         self.state = "patrolling"
                         # Увеличенная скорость патруля (0.065 вместо 0.022)
                         self.vx += np.cos(self.heading) * 0.065 + self.rng.uniform(-0.025, 0.025)
                         self.vy += np.sin(self.heading) * 0.065 + self.rng.uniform(-0.025, 0.025)
                         
-                        # Периодические развороты (имитация поиска в разных направлениях)
+                        # Периодические развороты
                         if self.rng.random() < 0.015:
                             self.turn_dir = -self.turn_dir
                             self.heading += self.rng.uniform(-0.5, 0.5)  # Случайное отклонение курса
                         
-                        # Рывки вперёд (бросок на замеченное движение)
+                        # Рывки вперёд 
                         if self.rng.random() < 0.008:
                             self.vx *= 1.9
                             self.vy *= 1.9
                     
-                    # 🐑 ТРАВЯДНЫЕ — обычное блуждание
                     else:
                         self.state = "wandering"
                         self.vx += self.rng.uniform(-0.025, 0.025)
@@ -513,7 +511,7 @@ class Agent:
         nx, ny = self.x + self.vx, self.y + self.vy
         next_passable = self.is_tile_passable(world, int(nx), int(ny), self.genes)
 
-        # 🚫 Детектор застревания: если клетка непроходима ИЛИ это вода (для травоядных без жабр)
+        # Детектор застревания: если клетка непроходима ИЛИ это вода (для травоядных без жабр)
         is_water_ahead = (world.elevation[int(np.clip(ny, 0, world.height - 1)), int(np.clip(nx, 0, world.width - 1))] < world.sea_level)
         avoid_water = (not self.is_predator) and (self.genes[G_GILLS] < 0.42) and is_water_ahead
 
@@ -521,7 +519,7 @@ class Agent:
             self.x, self.y = nx, ny
             self.stuck_counter = 0  # Сброс счётчика
         else:
-            # 🔄 УМНЫЙ РАЗВОРОТ: проверяем обе стороны и выбираем проходиму
+            # УМНЫЙ РАЗВОРОТ: проверяем обе стороны и выбираем проходиму
             self.stuck_counter += 1
             
             # Пробуем поворот в обе стороны на 60°
@@ -540,12 +538,12 @@ class Agent:
                     self.vy = test_vy
                     break
             else:
-                # Если ни одно направление не подошло — разворот на 180°
+                # Если ни одно направление не подошло разворот на 180°
                 self.heading += np.pi
                 self.vx = np.cos(self.heading) * max_spd * 0.5
                 self.vy = np.sin(self.heading) * max_spd * 0.5
             
-            # 🆘 Если застряли 8+ тиков подряд — паника и разворот на 180°
+            # Если застряли 8+ тиков подряд паника и разворот на 180°
             if self.stuck_counter >= 8:
                 self.heading += np.pi + self.rng.uniform(-0.3, 0.3)
                 self.vx = np.cos(self.heading) * max_spd

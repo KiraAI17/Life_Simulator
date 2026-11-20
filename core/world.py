@@ -21,7 +21,12 @@ class World:
         self.sim_h = height // self.SCALE
         self.preset = preset
         self.water_ratio = float(np.clip(water_ratio, 0.15, 0.80))
-        self.rng = np.random.default_rng(seed)
+
+        if seed is None:
+            seed = int(np.random.default_rng().integers(1, 2_147_483_647))
+        self.seed = int(seed)
+        self.rng = np.random.default_rng(self.seed)
+
 
         self.sea_level = 0.35
         self.mountain_level = 0.76
@@ -76,7 +81,6 @@ class World:
 
         wy = (y - y0)[:, None]
         wx = (x - x0)[None, :]
-        wx = (x - x0)[None, :]
 
         top = arr[y0[:, None], x0[None, :]] * (1.0 - wx) + arr[y0[:, None], x1[None, :]] * wx
         bot = arr[y1[:, None], x0[None, :]] * (1.0 - wx) + arr[y1[:, None], x1[None, :]] * wx
@@ -111,6 +115,7 @@ class World:
         return (total - total.min()) / (total.max() - total.min() + 1e-6)
 
     def generate_map(self):
+        self.rng = np.random.default_rng(self.seed)
         h, w = self.height, self.width
         sh, sw = self.sim_h, self.sim_w
         sy, sx = np.mgrid[0:sh, 0:sw].astype(np.float32)
@@ -215,6 +220,31 @@ class World:
         eaten = min(avail, amount)
         self.plants[sy, sx] = avail - eaten
         return eaten
+    
+    def eat_plant_area(self, ix: int, iy: int, amount: float, radius: int = 1) -> float:
+        """
+        Съедает биомассу в квадратной области радиуса radius вокруг (ix, iy).
+        Распределяет amount пропорционально биомассе в каждой клетке.
+        Возвращает суммарно съеденное.
+        """
+        sx, sy = ix // self.SCALE, iy // self.SCALE
+        x0 = max(0, sx - radius)
+        x1 = min(self.sim_w, sx + radius + 1)
+        y0 = max(0, sy - radius)
+        y1 = min(self.sim_h, sy + radius + 1)
+
+        patch = self.plants[y0:y1, x0:x1]
+        if patch.size == 0:
+            return 0.0
+
+        total_available = float(patch.sum())
+        if total_available <= 0:
+            return 0.0
+
+        actual_eaten = min(amount, total_available)
+        ratio = actual_eaten / total_available
+        self.plants[y0:y1, x0:x1] = patch * (1.0 - ratio)
+        return actual_eaten
 
     def spawn_initial_life(
         self,
@@ -227,28 +257,112 @@ class World:
         self.agents.clear()
         self.carcasses.clear()
 
-        # 1. Сухопутные очаги (травоядные, волки, лисы)
+        # 1. Сухопутные очаги рздельный спавн с увеличенным расстоянием
         land_mask = (self.elevation >= self.sea_level) & (~self.freshwater) & (self.elevation < self.mountain_level)
         land_coords = np.argwhere(land_mask)
         if len(land_coords) > 0:
-            herds = 8
-            centers = land_coords[self.rng.choice(len(land_coords), size=min(herds, len(land_coords)), replace=False)]
-            for cy, cx in centers:
-                spawns = (
-                    ["land_grazer"] * (land_herbs // herds)
-                    + ["land_stalker"] * (land_preds // herds)
-                    + ["fox"] * (foxes // herds)
-                )
-                for arch in spawns:
-                    genes = self.evo_config.spawn_genome(arch, self.rng)
-                    for _ in range(20):
-                        ax = float(cx + self.rng.uniform(-45, 45))
-                        ay = float(cy + self.rng.uniform(-45, 45))
-                        if Agent.is_tile_passable(self, int(ax), int(ay), genes):
-                            self.agents.append(Agent(ax, ay, genes=genes, config=self.evo_config, rng=self.rng))
-                            break
+            pool = land_coords[self.rng.choice(len(land_coords), size=min(5000, len(land_coords)), replace=False)]
 
-        # 2. Океан (мирные рыбы + морские хищники/акулы)
+            def pick_centers(n: int):
+                """Жадный выбор центров, максимально разнесённых друг от друга."""
+                picked = []
+                for _ in range(n):
+                    sample = pool[self.rng.choice(len(pool), size=min(300, len(pool)), replace=False)]
+                    best, best_score = None, -1e18
+                    for cy, cx in sample:
+                        if not picked:
+                            score = float(self.rng.random())
+                        else:
+                            d = min(float(np.hypot(cy - ay, cx - ax)) for ay, ax in picked)
+                            score = d
+                        if score > best_score:
+                            best, best_score = (float(cy), float(cx)), score
+                    if best is not None:
+                        picked.append(best)
+                return picked
+
+            def spawn_group(arch: str, total: int, centers, spread: float):
+                """Спавнит РОВНО total особей, распределяя остаток по центрам."""
+                if total <= 0 or not centers:
+                    return
+                
+                is_land_arch = arch in ("land_grazer", "land_stalker", "fox")
+                
+                base, extra = divmod(total, len(centers))
+                for i, (cy, cx) in enumerate(centers):
+                    count = base + (1 if i < extra else 0)
+                    for _ in range(count):
+                        genes = self.evo_config.spawn_genome(arch, self.rng)
+                        for attempt in range(40):
+                            ax = float(cx + self.rng.uniform(-spread, spread))
+                            ay = float(cy + self.rng.uniform(-spread, spread))
+                            ix, iy = int(ax), int(ay)
+                            
+                            if ix < 0 or ix >= self.width or iy < 0 or iy >= self.height:
+                                continue
+                            
+                            if is_land_arch:
+                                elev = self.elevation[iy, ix]
+                                is_water = (elev < self.sea_level) or self.freshwater[iy, ix]
+                                if is_water:
+                                    continue
+                            
+                            if Agent.is_tile_passable(self, ix, iy, genes):
+                                self.agents.append(
+                                    Agent(ax, ay, genes=genes, config=self.evo_config, rng=self.rng)
+                                )
+                                break
+
+            # Спавн стад травоядных с УВЕЛИЧЕННЫМ расстоянием между особями
+            herb_centers = pick_centers(4)
+            # spread=90 вместо 45 — травоядные рассредоточены по большей площади
+            spawn_group("land_grazer", land_herbs, herb_centers, spread=90.0)
+
+            # Хищники спавнятся в определённом направлении от стад
+            predator_herds = self.rng.choice(len(herb_centers), size=min(4, len(herb_centers)), replace=False)
+            pred_centers = []
+            
+            for herd_idx in predator_herds:
+                hy, hx = herb_centers[herd_idx]
+                
+                # Пытаемся найти точку на суше в радиусе от стада
+                found_center = None
+                for attempt in range(15):  # 15 попыток найти сухую точку
+                    angle = self.rng.uniform(0, 2 * np.pi)
+                    distance = self.rng.uniform(160.0, 220.0)  # Немного варьируем расстояние
+                    pred_cy = hy + distance * np.sin(angle)
+                    pred_cx = hx + distance * np.cos(angle)
+                    
+                    ix, iy = int(pred_cx), int(pred_cy)
+                    
+                    # Проверка границ карты
+                    if ix < 0 or ix >= self.width or iy < 0 or iy >= self.height:
+                        continue
+                    
+                    # Проверка на воду
+                    elev = self.elevation[iy, ix]
+                    is_water = (elev < self.sea_level) or self.freshwater[iy, ix]
+                    if is_water:
+                        continue  # Точка в воде, пробуем другую
+                    
+                    # Проверка что это не горы
+                    if elev >= self.mountain_level:
+                        continue  # Точка в горах, пробуем другую
+                    
+                    found_center = (float(pred_cy), float(pred_cx))
+                    break
+                
+                # Если нашли подходящую точку — добавляем
+                if found_center is not None:
+                    pred_centers.append(found_center)
+
+            # Распределяем хищников по выбранным центрам
+            if pred_centers:
+                # Волки — более сгруппированы (spread=35)
+                spawn_group("land_stalker", land_preds, pred_centers, spread=40.0)
+                # Лисы — более рассредоточены (spread=50)
+                spawn_group("fox", foxes, pred_centers, spread=60.0)
+        
         ocean_mask = self.elevation < self.sea_level - 0.015
         ocean_coords = np.argwhere(ocean_mask)
         if len(ocean_coords) > 0:

@@ -1,39 +1,40 @@
 import time
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QRectF
+import numpy as np
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QRectF, QPointF
 from PyQt6.QtGui import QColor, QPainter, QPen
 from PyQt6.QtWidgets import (
-    QComboBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QMainWindow,
-    QMessageBox, QPushButton, QSlider, QSpinBox, QVBoxLayout, QWidget,
-    QFileDialog, QInputDialog, QCheckBox, QScrollArea, QLineEdit, QGridLayout,
+    QApplication, QCheckBox, QComboBox, QFileDialog, QFormLayout, QGridLayout,
+    QGroupBox, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMainWindow,
+    QMessageBox, QProgressDialog, QPushButton, QScrollArea, QSlider, QSpinBox,
+    QVBoxLayout, QWidget,
 )
+from core.agent import Agent
 from core.analytics import EcosystemTracker
+from core.morphology import (
+    G_BRIGHTNESS, G_CLAWS, G_DIET, G_FUR, G_GILLS, G_HUE_SHIFT, G_LATERAL,
+    G_LEGS, G_LENGTH, G_LUNGS, G_NOCTURNAL, G_OPT_TEMP, G_SATURATION,
+    G_SENSE, G_SHELL, G_SIZE, G_SPEED, G_WIDTH,
+)
 from core.storage import ExperimentStorage
 from core.world import World
 from ui.map_canvas import MapCanvas
-from core.morphology import (
-    G_WIDTH, G_LENGTH, G_SHELL, G_CLAWS, G_LEGS, G_LATERAL, G_GILLS, G_LUNGS,
-    G_DIET, G_SPEED, G_SENSE, G_SIZE, G_FUR, G_OPT_TEMP, G_NOCTURNAL,
-    G_HUE_SHIFT, G_SATURATION, G_BRIGHTNESS,
-)
 
-
-from PyQt6.QtCore import pyqtSignal, QRectF 
 
 class PopulationChartWidget(QWidget):
     """Живой график с кликабельной легендой: клик по подписи -> метки на существах."""
 
-    species_clicked = pyqtSignal(str)  #сигнал "пользователь кликнул по подписи вида"
+    species_clicked = pyqtSignal(str)
 
     def __init__(self, tracker: EcosystemTracker, parent=None):
         super().__init__(parent)
         self.tracker = tracker
         self.setMinimumHeight(155)
-        self._legend_rects: list[tuple[QRectF, str]] = []  # (прямоугольник, ключ вида)
-        self.setMouseTracking(True)  # для подсветки при наведении (опционально)
+        self._legend_rects: list[tuple[QRectF, str]] = []
+        self.setMouseTracking(True)
 
     def paintEvent(self, event):
         p = QPainter(self)
-        self._legend_rects.clear()  #сбрасываем перед каждой перерисовкой
+        self._legend_rects.clear()
         try:
             p.fillRect(self.rect(), QColor(24, 28, 36))
             p.setPen(QColor(55, 62, 75))
@@ -54,8 +55,8 @@ class PopulationChartWidget(QWidget):
                 ("crabs", QColor(225, 55, 75), "Крабы"),
             ]
 
-            max_animals = max(15.0, max(float(row[k]) for row in data for k, _, _ in animal_series))
-            max_plants = max(100.0, max(float(row["plants"]) for row in data))
+            max_animals = max(15.0, max(float(row.get(k, 0)) for row in data for k, _, _ in animal_series))
+            max_plants = max(100.0, max(float(row.get("plants", 0)) for row in data))
 
             pad_l, pad_r, pad_t, pad_b = 8, 8, 28, 8
             w = max(1, self.width() - pad_l - pad_r)
@@ -69,7 +70,7 @@ class PopulationChartWidget(QWidget):
             prev_x, prev_y = None, None
             for i, row in enumerate(data):
                 x = pad_l + (i / (n - 1)) * w
-                y = pad_t + h - (row["plants"] / max_plants) * h
+                y = pad_t + h - (row.get("plants", 0) / max_plants) * h
                 if prev_x is not None:
                     p.drawLine(int(prev_x), int(prev_y), int(x), int(y))
                 prev_x, prev_y = x, y
@@ -79,17 +80,16 @@ class PopulationChartWidget(QWidget):
                 prev_x, prev_y = None, None
                 for i, row in enumerate(data):
                     x = pad_l + (i / (n - 1)) * w
-                    y = pad_t + h - (row[key] / max_animals) * h
+                    y = pad_t + h - (row.get(key, 0) / max_animals) * h
                     if prev_x is not None:
                         p.drawLine(int(prev_x), int(prev_y), int(x), int(y))
                     prev_x, prev_y = x, y
 
-            #Компактная легенда с запоминанием прямоугольников для клика
             last = data[-1]
             fm = p.fontMetrics()
             lx = 8
             p.setPen(QColor(75, 195, 95))
-            text = f"Флора:{int(last['plants'])}"
+            text = f"Флора:{int(last.get('plants', 0))}"
             p.drawText(lx, 13, text)
             self._legend_rects.append(
                 (QRectF(lx - 2, 2, fm.horizontalAdvance(text) + 4, 16), "plants")
@@ -98,7 +98,7 @@ class PopulationChartWidget(QWidget):
 
             for key, color, label in animal_series:
                 p.setPen(color)
-                text = f"{label}:{last[key]}"
+                text = f"{label}:{last.get(key, 0)}"
                 p.drawText(lx, 13, text)
                 self._legend_rects.append(
                     (QRectF(lx - 2, 2, fm.horizontalAdvance(text) + 4, 16), key)
@@ -108,7 +108,6 @@ class PopulationChartWidget(QWidget):
             p.end()
 
     def mousePressEvent(self, event):
-        """Клик по подписи в легенде -> сигнал для маркировки вида на карте."""
         if event.button() == Qt.MouseButton.LeftButton:
             pos = event.position()
             for rect, key in self._legend_rects:
@@ -125,6 +124,7 @@ class MainWindow(QMainWindow):
         self.paused = False
         self.speed_mult = 1
         self._marked_species: str | None = None
+        self._selected_agent = None
 
         self.tracker = EcosystemTracker(max_points=300, sample_interval=10)
         self.storage = ExperimentStorage()
@@ -169,6 +169,16 @@ class MainWindow(QMainWindow):
             ctrl_layout.addWidget(btn)
         side_layout.addWidget(ctrl_group)
 
+        skip_group = QGroupBox("Перемотка времени")
+        skip_layout = QHBoxLayout(skip_group)
+        for skip_n in (100, 500, 1000, 10000):
+            label = f"+{skip_n // 1000}k" if skip_n >= 1000 else f"+{skip_n}"
+            btn = QPushButton(label)
+            btn.setToolTip(f"Перемотать на {skip_n} тиков вперёд")
+            btn.clicked.connect(lambda _, n=skip_n: self.skip_ticks(n))
+            skip_layout.addWidget(btn)
+        side_layout.addWidget(skip_group)
+
         chart_group = QGroupBox("Динамика популяций во времени")
         chart_layout = QVBoxLayout(chart_group)
         self.chart = PopulationChartWidget(self.tracker)
@@ -195,31 +205,37 @@ class MainWindow(QMainWindow):
         init_form = QFormLayout(init_group)
         self.cb_preset = QComboBox()
         self.cb_preset.addItems(World.PRESETS)
-        self.cb_preset.setCurrentText(getattr(self.world, "preset", "archipelago"))
+        self.cb_preset.setCurrentText(getattr(self.world, "preset", "continents"))
         init_form.addRow("Тип карты:", self.cb_preset)
-        
+
+        self.ed_seed = QLineEdit()
+        self.ed_seed.setPlaceholderText(f"Случайный (сейчас: {self.world.seed})")
+        self.ed_seed.setToolTip("Оставьте пустым для случайного сида при каждом перезапуске или введите число/текст")
+        init_form.addRow("Сид карты:", self.ed_seed)
+
         self.sp_herbs = QSpinBox()
         self.sp_herbs.setRange(0, 400)
-        self.sp_herbs.setValue(120)
+        self.sp_herbs.setValue(140)
         init_form.addRow("Травоядные:", self.sp_herbs)
         self.sp_wolves = QSpinBox()
         self.sp_wolves.setRange(0, 150)
-        self.sp_wolves.setValue(20)
+        self.sp_wolves.setValue(14)
         init_form.addRow("Волки:", self.sp_wolves)
         self.sp_foxes = QSpinBox()
         self.sp_foxes.setRange(0, 150)
-        self.sp_foxes.setValue(24)
+        self.sp_foxes.setValue(16)
         init_form.addRow("Лисы:", self.sp_foxes)
         self.sp_worms = QSpinBox()
         self.sp_worms.setRange(0, 300)
-        self.sp_worms.setValue(90)
+        self.sp_worms.setValue(100)
         init_form.addRow("Рыбы:", self.sp_worms)
         self.sp_sharks = QSpinBox()
         self.sp_sharks.setRange(0, 100)
         self.sp_sharks.setValue(12)
         init_form.addRow("Акулы:", self.sp_sharks)
+
         btn_restart = QPushButton("Перезапустить мир")
-        btn_restart.clicked.connect(self.restart_world)
+        btn_restart.clicked.connect(self.on_restart_clicked)
         init_form.addRow(btn_restart)
         side_layout.addWidget(init_group)
 
@@ -229,13 +245,6 @@ class MainWindow(QMainWindow):
         btn_load = QPushButton("Загрузить (SQLite / JSON)")
         btn_load.clicked.connect(self.load_experiment)
         side_layout.addWidget(btn_load)
-        side_layout.addStretch(1)
-
-        self.status_label = QLabel()
-        self.statusBar().addWidget(self.status_label)
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self.tick)
-        self.timer.start(33)
 
         insp_group = QGroupBox("Инспектор и Редактор ДНК")
         insp_layout = QVBoxLayout(insp_group)
@@ -323,11 +332,18 @@ class MainWindow(QMainWindow):
             gene_form.addRow(f"{title}:", self._wrap_slider(sl, lbl))
         insp_layout.addLayout(gene_form)
         side_layout.addWidget(insp_group)
+        side_layout.addStretch(1)
+
+        self.status_label = QLabel()
+        self.statusBar().addWidget(self.status_label)
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.tick)
+        self.timer.start(33)
 
         self.canvas.agent_selected.connect(self._on_agent_selected)
         self.canvas.map_clicked.connect(self._on_map_clicked)
         self.chart.species_clicked.connect(self._mark_species)
-        
+
         self.showMaximized()
         self.update_status()
 
@@ -342,9 +358,9 @@ class MainWindow(QMainWindow):
         box = QWidget()
         lay = QHBoxLayout(box)
         lay.setContentsMargins(0, 0, 0, 0)
-        label.setFixedWidth(34)
+        label.setFixedWidth(36)
         slider.setMinimumWidth(95)
-        slider.setMaximumWidth(180)  # Защита от наезда на скроллбар
+        slider.setMaximumWidth(180)
         lay.addWidget(slider)
         lay.addWidget(label)
         return box
@@ -360,8 +376,8 @@ class MainWindow(QMainWindow):
         self.lbl_temp.setText(f"{self.sl_temp.value():+d}°C")
 
     def _on_map_clicked(self, wx: float, wy: float):
-        if not self.chk_spawn_mode.isChecked(): return
-        from core.agent import Agent
+        if not self.chk_spawn_mode.isChecked():
+            return
         arch = self.cb_spawn_arch.currentText()
         genes = self.world.evo_config.spawn_genome(arch, self.world.rng)
         if Agent.is_tile_passable(self.world, int(wx), int(wy), genes):
@@ -376,12 +392,17 @@ class MainWindow(QMainWindow):
     def _on_agent_selected(self, agent):
         self._selected_agent = agent
         has_agent = agent is not None and agent.alive
-        for w in (self.ed_agent_name, self.btn_mark, self.btn_heal, self.btn_clone, self.btn_kill, self.cb_morph_arch, self.btn_apply_arch):
+        for w in (
+            self.ed_agent_name, self.btn_mark, self.btn_heal, self.btn_clone,
+            self.btn_kill, self.cb_morph_arch, self.btn_apply_arch,
+        ):
             w.setEnabled(has_agent)
+
         if has_agent:
             self.ed_agent_name.blockSignals(True)
             self.ed_agent_name.setText(getattr(agent, "custom_name", ""))
             self.ed_agent_name.blockSignals(False)
+
         for g_idx, sl in self._gene_sliders.items():
             sl.setEnabled(has_agent)
             scale = self._gene_scales[g_idx]
@@ -397,12 +418,12 @@ class MainWindow(QMainWindow):
 
     def _on_gene_edited(self, g_idx: int, val: int, scale: float):
         agent = getattr(self, "_selected_agent", None)
-        if agent is None or not agent.alive: return
+        if agent is None or not agent.alive:
+            return
         real_val = val / scale
         agent.genes[g_idx] = real_val
         self._gene_labels[g_idx].setText(f"{real_val:.2f}" if scale > 1 else f"{real_val:.0f}")
         agent.rebuild_phenotype()
-        self.canvas._sprite_cache.pop(id(agent), None)
         self.canvas.update()
         self._refresh_inspector_text()
 
@@ -430,8 +451,12 @@ class MainWindow(QMainWindow):
     def _clone_agent(self):
         agent = getattr(self, "_selected_agent", None)
         if agent is not None and agent.alive:
-            from core.agent import Agent
-            clone = Agent(agent.x + 3.0, agent.y + 3.0, genes=agent.genes.copy(), config=self.world.evo_config, rng=self.world.rng)
+            clone = Agent(
+                agent.x + 3.0, agent.y + 3.0,
+                genes=agent.genes.copy(),
+                config=self.world.evo_config,
+                rng=self.world.rng,
+            )
             clone.marked = agent.marked
             self.world.agents.append(clone)
             self.canvas.update()
@@ -452,15 +477,11 @@ class MainWindow(QMainWindow):
         agent = getattr(self, "_selected_agent", None)
         if agent is not None and agent.alive:
             agent.apply_archetype(self.cb_morph_arch.currentText())
-            self.canvas._sprite_cache.pop(id(agent), None)
             self._on_agent_selected(agent)
             self.canvas.update()
 
     def _mark_species(self, key: str):
         """Маркирует всех существ выбранного вида (или снимает метки при повторном клике)."""
-        from core.morphology import G_DIET, G_FUR, G_GILLS, G_LEGS, G_LUNGS, G_SHELL
-
-        # клик по "Флора" переключает режим карты на plants
         if key == "plants":
             if self.canvas.mode == "plants":
                 self.canvas.set_mode("composite")
@@ -470,7 +491,6 @@ class MainWindow(QMainWindow):
                 self.cb_view_mode.setCurrentText("plants")
             return
 
-        # Если этот вид уже помечен — снимаем метки (toggle)
         if self._marked_species == key:
             for a in self.world.agents:
                 a.marked = False
@@ -478,27 +498,41 @@ class MainWindow(QMainWindow):
             self.canvas.update()
             return
 
-        # Иначе — сначала снимаем старые метки, потом ставим новые
         for a in self.world.agents:
             a.marked = False
 
-        g = None
+        if key == "crabs":
+            crab_count = sum(1 for a in self.world.agents if a.crab_score > 0.55)
+            if crab_count == 0 and self.world.agents:
+                best = max(self.world.agents, key=lambda a: a.crab_score)
+                best.marked = True
+                self.canvas.selected_agent = best
+                self._on_agent_selected(best)
+                target_zoom = max(self.canvas.zoom, 3.0)
+                self.canvas.zoom = target_zoom
+                self.canvas.offset = QPointF(
+                    self.canvas.width() / 2.0 - best.x * target_zoom,
+                    self.canvas.height() / 2.0 - best.y * target_zoom,
+                )
+                self.canvas._clamp_camera()
+                self._marked_species = key
+                self.canvas.update()
+                return
+
         for a in self.world.agents:
             g = a.genes
             is_fox = (g[G_FUR] > 0.55) and (g[G_SHELL] < 0.30) and (0.25 < g[G_DIET] <= 0.72) and (g[G_LEGS] >= 4.0)
             if a.crab_score > 0.55:
                 kind = "crabs"
             elif g[G_GILLS] > 0.55 and g[G_LUNGS] < 0.45:
-                if g[G_DIET] > 0.35:
-                    kind = "sharks"
-                else:
-                    kind = "aquatic"
+                kind = "sharks" if g[G_DIET] > 0.35 else "aquatic"
             elif is_fox:
                 kind = "foxes"
             elif a.is_predator:
                 kind = "wolves"
             else:
                 kind = "herbivores"
+
             if kind == key:
                 a.marked = True
 
@@ -506,7 +540,8 @@ class MainWindow(QMainWindow):
         self.canvas.update()
 
     def _refresh_inspector_text(self):
-        if not hasattr(self, "lbl_insp_info"): return
+        if not hasattr(self, "lbl_insp_info"):
+            return
         agent = getattr(self, "_selected_agent", None)
         if agent is None or not agent.alive:
             self.lbl_insp_info.setText("Кликните на любое животное на карте")
@@ -531,7 +566,28 @@ class MainWindow(QMainWindow):
         else:
             self.timer.setInterval(16)
 
-    def restart_world(self):
+    def _parse_manual_seed(self) -> int | None:
+        raw = self.ed_seed.text().strip()
+        if not raw:
+            return None
+        try:
+            return int(raw)
+        except ValueError:
+            # Если ввели слово/строку — превращаем в стабильный числовой сид
+            import zlib
+            return int(zlib.crc32(raw.encode("utf-8")) & 0x7FFFFFFF)
+
+    def on_restart_clicked(self):
+        """Клик по кнопке «Перезапустить мир»: берёт ручной сид или генерирует новый случайный."""
+        manual_seed = self._parse_manual_seed()
+        if manual_seed is not None:
+            seed_to_use = manual_seed
+        else:
+            seed_to_use = int(np.random.default_rng().integers(1, 2_147_483_647))
+        self._rebuild_world(seed_to_use)
+
+    def _rebuild_world(self, seed: int):
+        self.world.seed = int(seed)
         self.world.preset = self.cb_preset.currentText()
         self.world.tick = 0
         self.world.generate_map()
@@ -545,8 +601,46 @@ class MainWindow(QMainWindow):
         self._on_live_params_changed()
         self.tracker.reset()
         self.tracker.record(self.world, force=True)
-        self.canvas._sprite_cache.clear()
+        self.canvas.selected_agent = None
+        self._on_agent_selected(None)
         self.canvas.set_world(self.world)
+        self.canvas.update()
+        self.chart.update()
+        self.ed_seed.setPlaceholderText(f"Случайный (сейчас: {self.world.seed})")
+        self.update_status()
+
+    def skip_ticks(self, n: int):
+        """Перемотка симуляции на n тиков вперёд с прогресс-баром."""
+        if getattr(self, "_skipping", False):
+            return
+        self._skipping = True
+
+        was_running = self.timer.isActive()
+        self.timer.stop()
+
+        progress = QProgressDialog(f"Перемотка {n} тиков...", "Отмена", 0, n, self)
+        progress.setWindowTitle("Перемотка симуляции")
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(200)
+        progress.setValue(0)
+
+        try:
+            for i in range(n):
+                if progress.wasCanceled():
+                    break
+                self.world.step()
+                self.tracker.record(self.world)
+                if (i + 1) % 50 == 0 or i == n - 1:
+                    progress.setValue(i + 1)
+                    QApplication.processEvents()
+            progress.setValue(n)
+        finally:
+            progress.close()
+            self._skipping = False
+            if was_running:
+                self.timer.start(33 if self.speed_mult == 1 else (22 if self.speed_mult == 2 else 16))
+
+        self.canvas.update_texture()
         self.canvas.update()
         self.chart.update()
         self.update_status()
@@ -559,54 +653,103 @@ class MainWindow(QMainWindow):
                 "init_wolves": self.sp_wolves.value(),
                 "init_foxes": self.sp_foxes.value(),
                 "init_aquatic": self.sp_worms.value(),
+                "init_sharks": self.sp_sharks.value(),
                 "plant_growth_mult": self.world.plant_growth_mult,
                 "repro_rate_mult": self.world.repro_rate_mult,
                 "lifespan_mult": self.world.lifespan_mult,
                 "temp_offset": self.world.temp_offset,
             }
             exp_id, json_path = self.storage.save_experiment(self.world, self.tracker, params)
-            QMessageBox.information(self, "Эксперимент сохранён", f"Запись #{exp_id} сохранена в SQLite (data/experiments.db)\nи экспортирована в {json_path}")
+            QMessageBox.information(
+                self,
+                "Эксперимент сохранён",
+                f"Запись #{exp_id} (включая {len(self.world.agents)} особей и их ДНК) сохранена в SQLite\nи экспортирована в {json_path}",
+            )
         except Exception as e:
             QMessageBox.critical(self, "Ошибка сохранения", str(e))
 
     def load_experiment(self):
         try:
             exps = self.storage.list_experiments()
-            items = [f"#{e['id']} | {e['created_at']} | {e['preset']} (тиков: {e['total_ticks']}, краб: {e['max_crab_score']:.0%})" for e in exps]
+            items = [
+                f"#{e['id']} | {e['created_at']} | {e['preset']} (тиков: {e['total_ticks']}, особей: {e['final_population']}, краб: {e['max_crab_score']:.0%})"
+                for e in exps
+            ]
             items.append("Выбрать JSON-файл с диска...")
             choice, ok = QInputDialog.getItem(self, "Загрузка эксперимента", "Выберите сохранённый прогон:", items, 0, False)
-            if not ok or not choice: return
+            if not ok or not choice:
+                return
 
             if choice.startswith("Выбрать JSON"):
                 path, _ = QFileDialog.getOpenFileName(self, "Открыть JSON эксперимента", "data/exports", "JSON (*.json)")
-                if not path: return
+                if not path:
+                    return
                 data = self.storage.load_from_json(path)
             else:
                 exp_id = int(choice.split("|")[0].replace("#", "").strip())
                 data = self.storage.load_from_db(exp_id)
-                if not data: return
+                if not data:
+                    return
 
             p = data.get("parameters", {})
-            p.get("init_sharks", 12)
             self.paused = True
             self.btn_pause.setText("Продолжить")
-            self.cb_preset.setCurrentText(p.get("preset", "archipelago"))
-            self.sp_herbs.setValue(int(p.get("init_herbivores", 120)))
-            self.sp_wolves.setValue(int(p.get("init_wolves", 20)))
-            self.sp_foxes.setValue(int(p.get("init_foxes", 24)))
-            self.sp_worms.setValue(int(p.get("init_aquatic", 90)))
+            self.cb_preset.setCurrentText(p.get("preset", "continents"))
+            self.sp_herbs.setValue(int(p.get("init_herbivores", 140)))
+            self.sp_wolves.setValue(int(p.get("init_wolves", 14)))
+            self.sp_foxes.setValue(int(p.get("init_foxes", 16)))
+            self.sp_worms.setValue(int(p.get("init_aquatic", 100)))
+            self.sp_sharks.setValue(int(p.get("init_sharks", 12)))
             self.sl_plants.setValue(int(round(p.get("plant_growth_mult", 1.0) * 100)))
             self.sl_repro.setValue(int(round(p.get("repro_rate_mult", 1.0) * 100)))
             self.sl_life.setValue(int(round(p.get("lifespan_mult", 1.0) * 100)))
             self.sl_temp.setValue(int(round(p.get("temp_offset", 0.0))))
-            self.restart_world()
+
+            saved_seed = data.get("seed")
+            if saved_seed is not None:
+                seed_to_load = int(saved_seed)
+            else:
+                seed_to_load = int(np.random.default_rng().integers(1, 2_147_483_647))
+
+            self.ed_seed.clear()
+            self._rebuild_world(seed_to_load)
+
+            # Восстанавливаем тик и сохранённых мутантов с их 18 генами
+            self.world.tick = int(data.get("total_ticks", 0))
+            saved_agents = data.get("agents", [])
+            if saved_agents:
+                self.world.agents.clear()
+                self.world.carcasses.clear()
+                for ad in saved_agents:
+                    genes_arr = np.array(ad["genes"], dtype=np.float32)
+                    ag = Agent(ad["x"], ad["y"], genes=genes_arr, config=self.world.evo_config, rng=self.world.rng)
+                    ag.vx = float(ad.get("vx", 0.0))
+                    ag.vy = float(ad.get("vy", 0.0))
+                    ag.hp = min(ag.max_hp, float(ad.get("hp", ag.max_hp)))
+                    ag.energy = float(ad.get("energy", 75.0))
+                    ag.hydration = float(ad.get("hydration", 85.0))
+                    ag.oxygen = float(ad.get("oxygen", 100.0))
+                    ag.age = int(ad.get("age", 0))
+                    ag.marked = bool(ad.get("marked", False))
+                    ag.custom_name = str(ad.get("custom_name", ""))
+                    self.world.agents.append(ag)
+                self.canvas._sprite_cache.clear()
 
             self.tracker.history.clear()
             for row in data.get("timeline", []):
                 self.tracker.history.append(row)
+            if not self.tracker.history:
+                self.tracker.record(self.world, force=True)
+
+            self.canvas.update_texture()
+            self.canvas.update()
             self.chart.update()
             self.update_status()
-            QMessageBox.information(self, "Эксперимент загружен", f"Параметры и график прогона #{data.get('experiment_id')} восстановлены.\nНажмите «Продолжить» для запуска.")
+            QMessageBox.information(
+                self,
+                "Эксперимент загружен",
+                f"Прогон #{data.get('experiment_id')} восстановлен ({len(self.world.agents)} особей с их ДНК).\nНажмите «Продолжить» для запуска.",
+            )
         except Exception as e:
             QMessageBox.critical(self, "Ошибка загрузки", str(e))
 
@@ -614,13 +757,10 @@ class MainWindow(QMainWindow):
         if self.paused:
             return
         t0 = time.perf_counter()
-        steps_done = 0
-        # Разрешаем до 28 мс на симуляцию (из 33 мс кадра), чтобы x5 и x10 реально ускоряли мир
         time_budget = 0.014 if self.speed_mult == 1 else 0.028
         for _ in range(self.speed_mult):
             self.world.step()
             self.tracker.record(self.world)
-            steps_done += 1
             if (time.perf_counter() - t0) > time_budget:
                 break
         self.canvas.update()
@@ -637,6 +777,7 @@ class MainWindow(QMainWindow):
             f"Тик: {self.world.tick} | Скорость: x{self.speed_mult} | "
             f"Всего: {len(self.world.agents)} (Травоядн.: {last.get('herbivores', 0)}, "
             f"Волки: {last.get('wolves', 0)}, Лисы: {last.get('foxes', 0)}, "
-            f"Рыбы: {last.get('aquatic', 0)}, Крабы: {last.get('crabs', 0)}) | "
+            f"Рыбы: {last.get('aquatic', 0)}, Акулы: {last.get('sharks', 0)}, "
+            f"Крабы: {last.get('crabs', 0)}) | "
             f"Max Crab: {last.get('max_crab_score', 0.0):.0%}"
         )

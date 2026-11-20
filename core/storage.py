@@ -21,7 +21,7 @@ def _json_default(obj):
 
 
 class ExperimentStorage:
-    """Сохранение и загрузка экспериментов в SQLite и JSON."""
+    """Сохранение и загрузка экспериментов (параметры, график и живые существа) в SQLite и JSON."""
 
     def __init__(self, db_path: str | Path = "data/experiments.db", export_dir: str | Path = "data/exports"):
         self.db_path = Path(db_path)
@@ -42,38 +42,68 @@ class ExperimentStorage:
                     final_population INTEGER NOT NULL,
                     max_crab_score REAL NOT NULL,
                     params_json TEXT NOT NULL,
-                    timeline_json TEXT NOT NULL
+                    timeline_json TEXT NOT NULL,
+                    agents_json TEXT NOT NULL DEFAULT '[]'
                 )
             """)
+            # Безопасная миграция для уже существующей БД без колонки agents_json
+            try:
+                conn.execute("ALTER TABLE experiments ADD COLUMN agents_json TEXT NOT NULL DEFAULT '[]'")
+            except sqlite3.OperationalError:
+                pass
 
     def save_experiment(self, world: "World", tracker: "EcosystemTracker", params: dict) -> tuple[int, Path]:
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         timeline = list(tracker.history)
         max_crab = max((float(row.get("max_crab_score", 0.0)) for row in timeline), default=0.0)
+        if world.agents:
+            max_crab = max(max_crab, max(float(a.crab_score) for a in world.agents if a.alive))
+
         raw_seed = getattr(world, "seed", None)
         seed_val = int(raw_seed) if raw_seed is not None else None
         preset_val = str(getattr(world, "preset", "archipelago"))
 
+        agents_snapshot = [
+            {
+                "x": round(float(a.x), 2),
+                "y": round(float(a.y), 2),
+                "vx": round(float(a.vx), 3),
+                "vy": round(float(a.vy), 3),
+                "genes": [round(float(g), 4) for g in a.genes],
+                "hp": round(float(a.hp), 1),
+                "energy": round(float(a.energy), 1),
+                "hydration": round(float(a.hydration), 1),
+                "oxygen": round(float(a.oxygen), 1),
+                "age": int(a.age),
+                "marked": bool(getattr(a, "marked", False)),
+                "custom_name": str(getattr(a, "custom_name", "")),
+            }
+            for a in world.agents
+            if a.alive
+        ]
+
         params_str = json.dumps(params, ensure_ascii=False, default=_json_default)
         timeline_str = json.dumps(timeline, ensure_ascii=False, default=_json_default)
+        agents_str = json.dumps(agents_snapshot, ensure_ascii=False, default=_json_default)
 
         with sqlite3.connect(self.db_path) as conn:
             cur = conn.execute(
                 """
                 INSERT INTO experiments (
                     created_at, preset, seed, total_ticks, final_population,
-                    max_crab_score, params_json, timeline_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    max_crab_score, params_json, timeline_json, agents_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     timestamp,
                     preset_val,
                     seed_val,
                     int(world.tick),
-                    len(world.agents),
+                    len(agents_snapshot),
                     max_crab,
                     params_str,
                     timeline_str,
+                    agents_str,
                 ),
             )
             exp_id = int(cur.lastrowid)
@@ -87,6 +117,7 @@ class ExperimentStorage:
             "total_ticks": int(world.tick),
             "parameters": params,
             "timeline": timeline,
+            "agents": agents_snapshot,
         }
         json_file.write_text(json.dumps(payload, indent=2, ensure_ascii=False, default=_json_default), encoding="utf-8")
         return exp_id, json_file
@@ -113,7 +144,7 @@ class ExperimentStorage:
     def load_from_db(self, exp_id: int) -> dict | None:
         with sqlite3.connect(self.db_path) as conn:
             row = conn.execute(
-                "SELECT id, created_at, preset, seed, total_ticks, params_json, timeline_json "
+                "SELECT id, created_at, preset, seed, total_ticks, params_json, timeline_json, agents_json "
                 "FROM experiments WHERE id = ?",
                 (exp_id,),
             ).fetchone()
@@ -127,7 +158,10 @@ class ExperimentStorage:
             "total_ticks": row[4],
             "parameters": json.loads(row[5]),
             "timeline": json.loads(row[6]),
+            "agents": json.loads(row[7]) if row[7] else [],
         }
 
     def load_from_json(self, json_path: str | Path) -> dict:
-        return json.loads(Path(json_path).read_text(encoding="utf-8"))
+        data = json.loads(Path(json_path).read_text(encoding="utf-8"))
+        data.setdefault("agents", [])
+        return data

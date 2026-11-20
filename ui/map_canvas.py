@@ -203,6 +203,12 @@ class MapCanvas(QWidget):
                     painter.setPen(QPen(ring_col, 0.9))
                     painter.setBrush(Qt.BrushStyle.NoBrush)
                     painter.drawEllipse(QPointF(agent.x, agent.y), 6.5, 6.5)
+
+                # 🐺 Индикатор "нюха" для волков
+                if getattr(agent, "state", "") == "sniffing":
+                    painter.setPen(QPen(QColor(255, 120, 40, 180), 0.7))
+                    painter.setBrush(Qt.BrushStyle.NoBrush)
+                    painter.drawEllipse(QPointF(agent.x, agent.y), 8.0, 8.0)
                 
                 painter.save()
                 painter.translate(agent.x, agent.y)
